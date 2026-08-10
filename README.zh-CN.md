@@ -184,6 +184,26 @@ claude plugin install intent-gate@baixinghao-plugins
 > 没有问题账本、没有 lint、没有交付拦截。SessionStart hook 每局自检：
 > 发现 server 缺席，agent 会主动提醒你去跑第 1 步。
 
+## 怎么用：张嘴说什么
+
+装完之后全靠大白话驱动。这张表就是全部说明书：
+
+| 你说 | 谁接活 | 发生什么 |
+|---|---|---|
+| "分析这个需求 / 帮我解析这个 PRD"（贴文档或指文件） | 🔴 红军（`requirement-alignment`） | 先读 playbook，跑 Step 0 置信度评估，然后逐题向你结构化提问（≥3 选项 + "其他"），一次一个断层 |
+| "画个状态机 / 生成 DDL" | 🔴 红军 | 同一个入口——型态路由自动判定你的需求需要哪几张图 |
+| "继续"（中断后/新会话） | 🔴 红军 | 从磁盘账本（`.harness/requests/{需求名}/_review/`）续跑，不依赖会话记忆 |
+| 回答它的提问："1"，或 "4 余额不足一律拒绝" | 对齐漏斗 | 原话逐字落账 → 注入图/规则 → 带精确落点核销 |
+| "红蓝对抗 / 蓝军评审"——**另开新会话说** | 🔵 蓝军（`red-blue-review`） | 对已交付的 summary 做独立对抗评审：R1-R9 九项检查 → findings，结论 PASS / FAIL-可整改 / FAIL-重做 |
+| "按 findings 整改"（回到红军的会话里说） | 🔴 红军整改纪律（§5.5） | 每条 finding 落进 `revision-log.md`（整改动作 + 真实落点），lint 重跑 CRITICAL 归零；与你之前拍板冲突的，端回来请你裁决 |
+| 什么都不说，直接让它写代码 | SessionStart hook | 编码前 agent 自动读已落地的 `summary.md` 契约；`blocked` 或 lint 带 CRITICAL 的契约拒绝被编码 |
+
+两条值得记住的规矩：
+
+- **认真回答它的提问**——你的每个答案都会变成编码 agent 要执行的契约的一部分。
+- **蓝军必须另开新会话**——同会话评审会退化成自查。红军交付完，开个新对话，
+  说一声"红蓝对抗"。
+
 ## 其他 MCP client
 
 同样先跑第 1 步装好 server，然后把客户端指向 `intent-gate` 命令：

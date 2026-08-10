@@ -1,6 +1,6 @@
 ---
 name: red-blue-review
-description: Use when the user asks for 红蓝对抗 / 蓝军评审 / 对抗评审 / 需求评审 (adversarial review of a requirement analysis), or after a complex requirement's summary.md is delivered and the human opts in - the blue army reviews red army artifacts in an independent session with information asymmetry, producing actionable findings that drive the revision loop until PASS
+description: Use when the user asks for 红蓝对抗 / 蓝军评审 / 对抗评审 / 需求评审 (adversarial review of a requirement analysis), when the user asks to 整改/按 findings 整改 (red-team revision of the analysis per review findings, §5.5), or after a complex requirement's summary.md is delivered and the human opts in - the blue army reviews red army artifacts in an independent session with information asymmetry, producing actionable findings that drive the revision loop until PASS
 ---
 
 # 红蓝对抗评审（蓝军 playbook）

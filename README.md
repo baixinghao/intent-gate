@@ -237,6 +237,29 @@ are live.
 > delivery blocking. The SessionStart hook self-checks at every session start:
 > if the server is missing, your agent will tell you to run step 1.
 
+## Using it: what to say
+
+Once installed, you drive it with plain language (Chinese works fine).
+This table is the whole manual:
+
+| You say | Who picks it up | What happens |
+|---|---|---|
+| "分析这个需求 / analyze this PRD"（贴文档或指文件） | 🔴 Red team（`requirement-alignment`） | Reads the playbook first, runs the Step 0 confidence check, then asks you structured questions (≥3 options + "other"), one gap at a time |
+| "画个状态机 / 生成 DDL" | 🔴 Red team | Same entry — pattern routing decides which diagrams your requirement actually needs |
+| "继续"（中断后/新会话） | 🔴 Red team | Resumes from the on-disk ledger (`.harness/requests/{feature}/_review/`) — no session memory needed |
+| 回答它的提问："1"，或 "4 余额不足一律拒绝" | the funnel | Answer logged verbatim → injected into the diagrams → settled with a precise landing point |
+| "红蓝对抗 / blue-team review" —— **另开新会话说** | 🔵 Blue team（`red-blue-review`） | Independent adversarial review of the delivered summary: R1–R9 checks → findings with verdict PASS / FAIL-可整改 / FAIL-重做 |
+| "按 findings 整改"（回到红军的会话里说） | 🔴 Red team revision discipline（§5.5） | Each finding settled into `revision-log.md` with a real landing point, lint re-runs to zero CRITICAL; anything conflicting with your earlier rulings comes back to you for a decision |
+| 什么都不说，直接让它写代码 | SessionStart hook | The agent reads the landed `summary.md` contract before coding; `blocked` or lint-CRITICAL contracts refuse to be coded against |
+
+Two rules worth remembering:
+
+- **Answer its questions seriously** — every answer becomes part of the contract
+  your coding agent will execute against.
+- **The blue team needs a fresh session** — reviewing in the same session degrades
+  adversarial review into self-check. Deliver with the red team, then open a new
+  conversation and say "红蓝对抗".
+
 ## Other MCP clients
 
 Install the server as in step 1, then point your client at the `intent-gate` command:

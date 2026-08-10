@@ -1,6 +1,6 @@
 ---
 name: requirement-alignment
-description: Use when analyzing a requirement/PRD, building state machines, sequence diagrams, decision tables or DDL from a spec, or resuming an interrupted requirement analysis - drives the three-level intent-alignment funnel (code evidence, registered inference, structured escalation) through the intent-gate MCP tools
+description: Use when analyzing a requirement/PRD (分析需求/解析需求/解析PRD/分析PRD), building state machines (画状态机), sequence diagrams (时序图), decision tables (决策表) or DDL from a spec, or resuming an interrupted requirement analysis (用户说"继续") - drives the three-level intent-alignment funnel (code evidence, registered inference, structured escalation) through the intent-gate MCP tools
 ---
 
 # Requirement Intent Alignment
