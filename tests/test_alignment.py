@@ -1,0 +1,306 @@
+"""意图对齐子系统测试（file-in-the-loop 全链路，single 通道，无网络、无钉钉依赖）。
+
+覆盖 DESIGN.md §3-§5 的纪律：
+  先落盘后分发 / 非阻塞 / 白名单 fail-closed / token 认领 /
+  collect 领取不重复 / resolve 核销写蓝军契约格式流水 /
+  AI 推断登记-确认闭环 / rebroadcast 对账
+
+群通道（钉钉出站/入站）的测试随剥离迁至 intent-gate-service/tests/test_bridge.py；
+inbox 认领逻辑（file_inbound_reply）单源留在 intent_gate，故在此回归。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from intent_gate.alignment.manager import AlignmentManager, file_inbound_reply  # noqa: E402
+from intent_gate.security import SenderPolicy  # noqa: E402
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+WHITELIST = SenderPolicy(frozenset({"zhangsan", "lisi"}))
+OPTIONS = ["REFUNDING→成功后REFUNDED", "直接REFUNDED", "独立退款单跟踪"]
+
+
+class AlignmentTestBase(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.mgr = AlignmentManager(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def review_dir(self, feature="order-refund"):
+        return self.root / ".harness" / "requests" / feature / "_review"
+
+    def inbound(self, text, sender, nick):
+        """intent-gate-service 入站回调的单源契约函数（single 通道测试直接调它）。"""
+        return file_inbound_reply(self.root, WHITELIST, text, sender, nick)
+
+
+class DispatchTests(AlignmentTestBase):
+    def test_dispatch_writes_checklist_and_returns_to_host(self):
+        """🔴 先落盘：登记后题目必须已在清单里；single 通道不发送，回给宿主提问。"""
+        result = run(self.mgr.dispatch_question(
+            "order-refund", "退款后订单状态？", "📋", OPTIONS, targets=["张三"]
+        ))
+        self.assertTrue(result["ok"])
+        token = result["token"]
+        checklist = (self.review_dir() / "pending-questions.md").read_text("utf-8")
+        self.assertIn(f"[{token}]", checklist)
+        self.assertIn("📋 退款后订单状态？", checklist)
+        self.assertIn("4.其他", checklist)
+        self.assertFalse(result["sent"])
+        self.assertEqual(result["channel"], "single")
+
+    def test_dispatch_rejects_bad_category(self):
+        result = run(self.mgr.dispatch_question("f", "gap", "❓", OPTIONS))
+        self.assertFalse(result["ok"])
+
+    def test_dispatch_requires_three_options_without_recommend(self):
+        """无推荐项必须给足 3 个选项（skill 精准提问纪律）。"""
+        result = run(self.mgr.dispatch_question("f", "gap", "📋", ["只有", "两个"]))
+        self.assertFalse(result["ok"])
+        # 有 AI 推荐项的点头题可放宽
+        result2 = run(self.mgr.dispatch_question(
+            "f", "gap", "📋", recommend="推断走软删（依据: addOrder 对称）"
+        ))
+        self.assertTrue(result2["ok"])
+
+
+class InboundAndCollectTests(AlignmentTestBase):
+    def dispatch_one(self) -> str:
+        return run(self.mgr.dispatch_question(
+            "order-refund", "退款后订单状态？", "📋", OPTIONS
+        ))["token"]
+
+    def test_unauthorised_sender_rejected(self):
+        token = self.dispatch_one()
+        outcome = self.inbound(f"[{token}] 选1", "mallory", "马洛里")
+        self.assertFalse(outcome["accepted"])
+
+    def test_reply_without_token_rejected(self):
+        self.dispatch_one()
+        outcome = self.inbound("选1", "zhangsan", "张三")
+        self.assertFalse(outcome["accepted"])
+
+    def test_reply_unknown_token_rejected(self):
+        self.dispatch_one()
+        outcome = self.inbound("[HG-FFFF] 选1", "zhangsan", "张三")
+        self.assertFalse(outcome["accepted"])
+
+    def test_full_group_roundtrip(self):
+        """发题 → 回复落盘 inbox → collect 领取 → resolve 核销+写流水，全链路。"""
+        token = self.dispatch_one()
+        outcome = self.inbound(
+            f"@机器人 [{token}] 选1，先REFUNDING再REFUNDED", "zhangsan", "张三"
+        )
+        self.assertTrue(outcome["accepted"])
+        # 答案已落盘 inbox
+        inbox_files = list((self.review_dir() / "inbox").glob("*.md"))
+        self.assertEqual(len(inbox_files), 1)
+
+        answers = self.mgr.collect_answers("order-refund")
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(answers[0]["token"], token)
+        self.assertEqual(answers[0]["responder"], "张三")
+        self.assertIn("选1", answers[0]["answer"])
+        # 领取即归档，第二次 collect 必须为空（防重复注入）
+        self.assertEqual(self.mgr.collect_answers("order-refund"), [])
+
+        result = self.mgr.resolve_question(
+            "order-refund", token,
+            answers[0]["answer"], "张三",
+            "退款 → REFUNDING (REDIS_LOCK, PAYMENT_REFUND)，支付回调成功 → REFUNDED",
+            "状态机 WITHDRAW_CONFIRM --> REFUNDING 边 / 时序图步骤 6",
+            source="group",
+        )
+        self.assertTrue(result["ok"])
+        # checklist 打勾
+        checklist = (self.review_dir() / "pending-questions.md").read_text("utf-8")
+        self.assertIn(f"- [x] [{token}]", checklist)
+        # alignment-log 必须是蓝军 R1 契约格式
+        log_text = (self.review_dir() / "alignment-log.md").read_text("utf-8")
+        self.assertIn("## Q1", log_text)
+        self.assertIn("- 提问：", log_text)
+        self.assertIn("（选项:", log_text)  # 提问字段带选项摘要
+        self.assertIn("（张三，钉钉群）", log_text)
+        self.assertIn("- 注入解读：", log_text)
+        self.assertIn("- 落点：", log_text)
+        # 已核销的题不能再 resolve
+        again = self.mgr.resolve_question(
+            "order-refund", token, "x", "y", "z", "w"
+        )
+        self.assertFalse(again["ok"])
+
+    def test_dialog_and_code_source_quote_formats(self):
+        """对话框兜底与代码实证，人类原话字段两种合法形态。"""
+        t1 = run(self.mgr.dispatch_question("f", "业务题", "📋", OPTIONS))["token"]
+        t2 = run(self.mgr.dispatch_question("f", "技术题", "🔧", OPTIONS))["token"]
+        self.mgr.resolve_question("f", t1, "就选2", "张三",
+                                  "注入语义A", "落点A", source="dialog")
+        self.mgr.resolve_question("f", t2, "stock:{skuId}", "StockService.deduct",
+                                  "注入语义B", "落点B", source="code")
+        log_text = (self.review_dir("f") / "alignment-log.md").read_text("utf-8")
+        self.assertIn("（张三，对话框）", log_text)
+        self.assertIn("来源: 代码实证（StockService.deduct）", log_text)
+
+
+class InferenceTests(AlignmentTestBase):
+    def test_record_and_confirm_inference(self):
+        rec = self.mgr.record_inference(
+            "f", "删除订单的业务逻辑", "软删+状态机置CANCELLED",
+            "addOrder 对称逻辑 + wiki 术语 cancel 定义"
+        )
+        self.assertTrue(rec["ok"])
+        inf_id = rec["inference_id"]
+        result = self.mgr.confirm_inferences(
+            "f",
+            [{"id": inf_id, "approved": True,
+              "interpretation": "DELETE 走软删，状态机 PAID-->CANCELLED",
+              "landing": "状态机边 / 决策表 BR-03"}],
+            confirmer="张三",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["failed"], [])
+        log_text = (self.review_dir("f") / "alignment-log.md").read_text("utf-8")
+        self.assertIn("[AI推断·依据:", log_text)
+        self.assertIn("确认人: 张三", log_text)
+        # 已结算的推断不可重复确认
+        again = self.mgr.confirm_inferences(
+            "f", [{"id": inf_id, "approved": True}], "张三"
+        )
+        self.assertEqual(len(again["failed"]), 1)
+
+    def test_reject_inference(self):
+        rec = self.mgr.record_inference("f", "gap", "结论", "依据")
+        result = self.mgr.confirm_inferences(
+            "f", [{"id": rec["inference_id"], "approved": False}], "张三"
+        )
+        self.assertTrue(result["settled"][0]["approved"] is False)
+        # 驳回不写 alignment-log
+        self.assertFalse((self.review_dir("f") / "alignment-log.md").exists())
+
+    def test_pending_inference_blocks_intent_aligned(self):
+        self.mgr.record_inference("f", "gap", "结论", "依据")
+        status = self.mgr.list_pending("f")
+        self.assertFalse(status["intent_aligned_ready"])
+        self.assertEqual(status["pending_inferences"], 1)
+
+    def test_confirm_approved_requires_precise_landing(self):
+        """🔴 确认即注入：approved 不给精确落点必须驳回（禁虚词落点）。"""
+        rec = self.mgr.record_inference("f", "gap", "结论", "依据")
+        result = self.mgr.confirm_inferences(
+            "f", [{"id": rec["inference_id"], "approved": True}], "张三"  # 缺 landing
+        )
+        self.assertEqual(len(result["failed"]), 1)
+        # 落点不给，推断必须还是未结算状态（可补落点后重新确认）
+        status = self.mgr.list_pending("f")
+        self.assertEqual(status["pending_inferences"], 1)
+
+
+class ResolveDisciplineTests(AlignmentTestBase):
+    def test_resolve_rejects_empty_landing(self):
+        """🔴 空解读/空落点禁止核销——防止静默丢弃意图。"""
+        token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        result = self.mgr.resolve_question("f", token, "选1", "张三", "", "")
+        self.assertFalse(result["ok"])
+        # 题必须还挂着，没打勾
+        checklist = (self.review_dir("f") / "pending-questions.md").read_text("utf-8")
+        self.assertIn(f"- [ ] [{token}]", checklist)
+
+
+class RebroadcastTests(AlignmentTestBase):
+    def test_rebroadcast_single_returns_list_without_sending(self):
+        run(self.mgr.dispatch_question("f", "题一", "📋", OPTIONS))
+        result = run(self.mgr.rebroadcast_pending("f"))
+        self.assertEqual(result["pending"], 1)
+        self.assertFalse(result["sent"])
+        # single 通道把清单回给宿主逐题确认
+        self.assertEqual(len(result["questions"]), 1)
+        self.assertIn("[HG-", result["questions"][0])
+
+    def test_rebroadcast_nothing_pending(self):
+        result = run(self.mgr.rebroadcast_pending("f"))
+        self.assertEqual(result["pending"], 0)
+
+
+class ListPendingTests(AlignmentTestBase):
+    def test_intent_aligned_ready_only_when_all_settled(self):
+        token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        self.assertFalse(self.mgr.list_pending("f")["intent_aligned_ready"])
+        self.inbound(f"[{token}] 选1", "lisi", "李四")
+        answers = self.mgr.collect_answers("f")
+        self.mgr.resolve_question("f", token, answers[0]["answer"], "李四",
+                                  "语义", "落点")
+        status = self.mgr.list_pending("f")
+        self.assertTrue(status["intent_aligned_ready"])
+
+
+class LedgerHardeningTests(AlignmentTestBase):
+    """账本层加固回归（审计修复）。"""
+
+    def test_question_summary_strips_token_prefix(self):
+        """"] " 切分法先命中 checkbox 的 "] "，把 [HG-XXXX] 残留进 gap——
+        alignment-log 提问字段被污染。修复后 token 必须剥干净。"""
+        token = run(self.mgr.dispatch_question(
+            "order-refund", "退款后订单状态？", "📋", OPTIONS))["token"]
+        store = self.mgr._store("order-refund")
+        summary = store.question_summary(token)
+        self.assertNotIn("[HG-", summary)
+        self.assertNotIn("- [ ]", summary)
+        self.assertIn("退款后订单状态？", summary)
+        detail = store.question_detail(token)
+        self.assertNotIn("[HG-", detail)
+        self.assertIn("选项:", detail)
+
+    def test_confirm_inference_requires_interpretation(self):
+        """approved 缺 interpretation 时禁止静默回退为推断结论。"""
+        inf_id = self.mgr.record_inference("f", "边界 gap", "推断结论", "依据链")["inference_id"]
+        result = self.mgr.confirm_inferences(
+            "f", [{"id": inf_id, "approved": True, "landing": "§4 REFUNDING 边"}], "张三")
+        self.assertEqual(result["settled"], [])
+        self.assertEqual(result["failed"][0]["id"], inf_id)
+        self.assertIn("interpretation", result["failed"][0]["reason"])
+
+    def test_inbox_same_second_replies_do_not_overwrite(self):
+        """同秒连发两条同 token 回复，文件名不得互相覆盖。"""
+        token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        store = self.mgr._store("f")
+        p1 = store.write_inbox(token, "选1", "zhangsan", "张三")
+        p2 = store.write_inbox(token, "选2", "zhangsan", "张三")
+        self.assertNotEqual(p1.name, p2.name)
+        self.assertTrue(p1.exists() and p2.exists())
+
+    def test_inbox_meta_fields_sanitised_against_forgery(self):
+        """nick 带换行可在 front-matter 里伪造 sender 行冒充白名单成员。"""
+        store = self.mgr._store("f2")
+        store.write_inbox("HG-AAAA", "答案原话", "evil", "甲\nsender: admin")
+        item = store.read_unconsumed()[0]
+        self.assertEqual(item["sender"], "evil")  # 伪造行未生效
+        self.assertNotIn("\n", item["nick"])
+        self.assertEqual(item["answer"], "答案原话")  # 正文一字不改
+
+    def test_unconsumed_inbox_blocks_ready(self):
+        """inbox 躺着未领取答案时 list_pending 不得报就绪（与 resume 同口径）。"""
+        token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        self.mgr.resolve_question("f", token, "选1", "张三", "语义", "落点")
+        self.assertTrue(self.mgr.list_pending("f")["intent_aligned_ready"])
+        self.mgr._store("f").write_inbox(token, "迟到的回复", "zhangsan", "张三")
+        lp = self.mgr.list_pending("f")
+        self.assertFalse(lp["intent_aligned_ready"])
+        self.assertEqual(lp["inbox_new_answers"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,19 @@
+# 跨平台分发纪律：hook 脚本在任何系统 checkout 都必须保持 LF。
+# Windows 上 core.autocrlf=true 会把 bash 脚本染成 CRLF，
+# polyglot 引导器与 session-start 直接静默哑火（纪律注入失效且无任何报错）。
+hooks/session-start text eol=lf
+*.sh text eol=lf
+
+# polyglot 包装器同时被 cmd.exe 与 bash 解析，必须保持 LF
+*.cmd text eol=lf
+
+# 代码与文档
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.gif binary

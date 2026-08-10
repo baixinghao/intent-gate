@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment & secrets (never commit)
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# Local agent config (per-machine, not for distribution)
+.claude/
+.kimi/
+
+# Reference copies of third-party projects (not ours, never publish)
+_ref/
+
+# Runtime state (alignment ledger created in the workspace root)
+.harness/
+
+# Local scratch
+.tmp-redblue-drill/

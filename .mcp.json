@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "intent-gate": {
+      "command": "intent-gate",
+      "env": {
+        "HG_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
