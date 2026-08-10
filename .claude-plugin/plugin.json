@@ -3,7 +3,7 @@
   "description": "Intent-alignment plugin for coding agents: requirement-analysis playbook, three-level intent funnel with file-in-the-loop persistence, and an optional red-blue adversarial review skill. DingTalk group channel and blocking gates live in the intent-gate-service sister MCP service",
   "version": "0.3.0",
   "author": {
-    "name": "intent-gate contributors"
+    "name": "baixinghao"
   },
   "homepage": "https://github.com/baixinghao/intent-gate",
   "repository": "https://github.com/baixinghao/intent-gate",
