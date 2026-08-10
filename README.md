@@ -216,28 +216,30 @@ human reply is in the sister project**; the main plugin is always non-blocking.
 Split out since v0.2.0 — the main plugin keeps only intent alignment and requirement
 analysis, with zero DingTalk dependencies.
 
-## Quick start
+## Quick start (Claude Code — two steps)
 
 ```bash
-# One-line install (no clone needed, isolated environment)
+# 1) Install the MCP server — the enforcement half (tools, ledger, lint gates)
 pipx install git+https://github.com/baixinghao/intent-gate.git
 # or: uv tool install git+https://github.com/baixinghao/intent-gate.git
 
-# From a clone (development)
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e .
-python -m unittest discover -s tests -v   # core-logic tests (no credentials needed)
-intent-gate                      # stdio MCP, waiting to be launched by your agent
+# 2) Install the plugin — skills + hooks, auto-registers the MCP server
+claude plugin marketplace add baixinghao/intent-gate
+claude plugin install intent-gate@baixinghao-plugins
 ```
 
-**All intent-alignment capabilities work with zero configuration** (single channel,
-chat dialog as fallback). For the DingTalk group channel, see the
-[intent-gate-service README](https://github.com/baixinghao/intent-gate-service).
+Restart your session. Done — entry discipline is auto-injected and the MCP tools
+are live.
 
-## MCP integration
+> ⚠️ **Step 1 is not optional.** The plugin's skills are discipline; the MCP server
+> is enforcement. A plugin-only install (no `intent-gate` command on PATH) leaves you
+> with good advice and zero mechanical gates — no question ledger, no lint, no
+> delivery blocking. The SessionStart hook self-checks at every session start:
+> if the server is missing, your agent will tell you to run step 1.
 
-### Claude Code (`.mcp.json`)
+## Other MCP clients
+
+Install the server as in step 1, then point your client at the `intent-gate` command:
 
 ```json
 {
@@ -249,23 +251,27 @@ chat dialog as fallback). For the DingTalk group channel, see the
 }
 ```
 
-When developing inside the repo, point `command` at the virtualenv interpreter:
+If your client speaks a network transport, expose MCP over **SSE** with
+`intent-gate --mcp-transport sse --mcp-port 8400`.
+
+**All intent-alignment capabilities work with zero configuration** (single channel,
+chat dialog as fallback). For the DingTalk group channel, see the
+[intent-gate-service README](https://github.com/baixinghao/intent-gate-service).
+
+## Development (from a clone)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e .
+python -m unittest discover -s tests -v   # core-logic tests (no credentials needed)
+```
+
+Point `command` at the virtualenv interpreter:
 `"command": "<repo>\\.venv\\Scripts\\python.exe", "args": ["-m", "intent_gate"]`
 (on macOS/Linux: `<repo>/.venv/bin/python`), and set
 `"env": { "PYTHONPATH": "<repo>\\src" }`.
-
-### Pi agent and other MCP clients
-
-Launch the same executable over stdio. If your client speaks a network transport,
-expose MCP over **SSE** with `intent-gate --mcp-transport sse --mcp-port 8400`.
-
-### As a Claude Code plugin
-
-The repo is also a Claude Code plugin (`.claude-plugin/` + `hooks/` + `skills/`):
-installing it auto-registers the MCP server and injects usage discipline via a
-SessionStart hook (read the playbook before intent alignment, when escalation to a
-human is mandatory, where the two optional capabilities live).
-See [docs/PLUGIN.md](docs/PLUGIN.md) for the skeleton.
+Plugin-form skeleton: see [docs/PLUGIN.md](docs/PLUGIN.md).
 
 ## Project structure
 

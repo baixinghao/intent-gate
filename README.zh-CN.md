@@ -165,26 +165,28 @@ lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性
 
 自 v0.2.0 起剥离——主插件只保留意图对齐与需求解析，零钉钉依赖。
 
-## 快速开始
+## 快速开始（Claude Code —— 两步）
 
 ```bash
-# 一行安装（免克隆，隔离环境）
+# 1）装 MCP server —— 执法的那一半（工具/账本/lint 门禁）
 pipx install git+https://github.com/baixinghao/intent-gate.git
 # 或：uv tool install git+https://github.com/baixinghao/intent-gate.git
 
-# 克隆仓库开发
-python -m venv .venv && .venv\Scripts\activate   # Unix: source .venv/bin/activate
-pip install -e .
-python -m unittest discover -s tests -v   # 核心逻辑测试（无需任何凭据）
-intent-gate                  # stdio MCP，等待 agent 拉起
+# 2）装插件 —— skills + hooks，自动注册 MCP server
+claude plugin marketplace add baixinghao/intent-gate
+claude plugin install intent-gate@baixinghao-plugins
 ```
 
-**零配置即可使用全部意图对齐能力**（single 通道，对话框兜底）。
-钉钉群通道见 [intent-gate-service README](https://github.com/baixinghao/intent-gate-service)。
+重启会话，完事——入口纪律自动注入，MCP 工具面在线。
 
-## MCP 接入
+> ⚠️ **第 1 步不可省。** 插件的 skill 是纪律，MCP server 才是执法。只装插件
+> （PATH 里没有 `intent-gate` 命令）= 只剩嘴上劝告，机械门禁全部阵亡——
+> 没有问题账本、没有 lint、没有交付拦截。SessionStart hook 每局自检：
+> 发现 server 缺席，agent 会主动提醒你去跑第 1 步。
 
-### Claude Code（`.mcp.json`）
+## 其他 MCP client
+
+同样先跑第 1 步装好 server，然后把客户端指向 `intent-gate` 命令：
 
 ```json
 {
@@ -196,21 +198,24 @@ intent-gate                  # stdio MCP，等待 agent 拉起
 }
 ```
 
-仓库内开发时，把 `command` 指向虚拟环境解释器：
+客户端走网络协议的话，用 `intent-gate --mcp-transport sse --mcp-port 8400`
+以 **SSE** 暴露 MCP。
+
+**零配置即可使用全部意图对齐能力**（single 通道，对话框兜底）。
+钉钉群通道见 [intent-gate-service README](https://github.com/baixinghao/intent-gate-service)。
+
+## 开发（克隆仓库）
+
+```bash
+python -m venv .venv && .venv\Scripts\activate   # Unix: source .venv/bin/activate
+pip install -e .
+python -m unittest discover -s tests -v   # 核心逻辑测试（无需任何凭据）
+```
+
+把 `command` 指向虚拟环境解释器：
 `"command": "<repo>\\.venv\\Scripts\\python.exe", "args": ["-m", "intent_gate"]`，
 并设 `"env": { "PYTHONPATH": "<repo>\\src" }`。
-
-### Pi agent 及其他 MCP client
-
-以 stdio 拉起同一可执行文件即可；若客户端走网络协议，
-用 `intent-gate --mcp-transport sse --mcp-port 8400` 以 **SSE** 暴露 MCP。
-
-### Claude Code 插件形态
-
-仓库同时是一个 Claude Code plugin（`.claude-plugin/` + `hooks/` + `skills/`）：
-插件安装后自动注册 MCP server，并通过 SessionStart hook 注入使用纪律
-（意图对齐先读 playbook、何时必须升级人工、两个可选能力的位置）。
-骨架说明见 [docs/PLUGIN.md](docs/PLUGIN.md)。
+插件形态骨架见 [docs/PLUGIN.md](docs/PLUGIN.md)。
 
 ## 项目结构
 
