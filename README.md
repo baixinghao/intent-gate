@@ -6,35 +6,46 @@
 [![Python >=3.11](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/protocol-MCP-green)](https://modelcontextprotocol.io/)
 
-**An intent-alignment engine for coding agents (lightweight plugin).** It dissolves
-requirement-intent gaps *before* coding starts: a PRD goes through an intent-confidence
-assessment → gaps are resolved through a three-level funnel → the output is technically
-annotated Mermaid contracts (state machines / sequence diagrams / decision tables) →
-a mechanical lint gate must reach zero → only then is coding allowed to begin.
+**Stop AI coding agents from guessing.**
 
-It runs as an **MCP server (stdio subprocess)** — plug-and-play with Claude Code,
-Pi agent, and other MCP clients. **No daemon, no long-lived connections, no external
-credentials** — pure stdio, zero extra dependencies, full workflow out of the box.
+Complex business requirements. A thin or sloppy PRD. No legacy code to reference.
+That is exactly where coding agents start inventing: "happy path only, no failure
+flow", "idempotency with no server-side design" — gaps get silently filled with
+plausible-looking guesses, and you find out far too late.
 
-> Since v0.2.0, all DingTalk interaction (group consensus channel + blocking decision
-> gates) has been split into the sister project
-> [**intent-gate-service**](https://github.com/baixinghao/intent-gate-service)
-> (a standalone MCP service). intent-gate is back to being lightweight: it keeps only
-> intent alignment and requirement analysis, and touches no DingTalk at all.
+intent-gate moves intent alignment **before** coding, into the requirement-analysis
+stage: a PRD goes through an intent-confidence gate → gaps are resolved through a
+three-level funnel → the output is technically annotated Mermaid contracts (state
+machines / sequence diagrams / decision tables) → a mechanical lint gate must reach
+zero CRITICAL → only then is coding allowed to begin.
 
-## Why it exists
+It runs as an **MCP server (stdio subprocess)** — plug-and-play with Claude Code and
+other MCP clients. **No daemon, no credentials, zero config** — full workflow out of the box.
 
-A major source of code hallucination is not model capability — it is **intent gaps
-getting masked by attention and papered over by guessing during coding**. While coding,
-the agent's attention is on code generation; gaps in the PRD like "only a happy path,
-no failure flow" or "idempotency with no server-side design" get silently filled in
-with a plausible-looking guess.
+## The problem
 
-The host's built-in intent prompts (e.g. AskUserQuestion) don't solve this: the
-judgment is ad hoc and the answers are ephemeral — one context compaction or session
-end, and the alignment state is gone.
+Coding agents guess — and they guess most where it hurts most:
 
-intent-gate's answer is **judgment stays with the host, discipline is enforced by code**:
+- **Complex business requirements** — dense branches, money flows, entity lifecycles.
+  The agent's attention is on code generation, so gaps like "only a happy path, no
+  failure flow" or "idempotency with no server-side design" get silently papered
+  over with a plausible-looking guess.
+- **Low-quality PRDs** — vague, contradictory, missing data sources. The agent
+  doesn't stop and ask; it interpolates.
+- **No legacy code to reference** — greenfield or a full rewrite: the codebase holds
+  no ground truth to anchor against, so every ambiguity becomes a coin flip.
+
+The host's built-in intent prompts (AskUserQuestion-style) don't fix this either:
+the judgment is ad hoc and the answers are ephemeral — one context compaction or
+session end, and the alignment state is gone.
+
+**A major source of code hallucination is not model capability — it is intent gaps
+getting resolved by guessing at coding time.**
+
+## The answer: intent alignment, front-loaded
+
+Rule on intent at analysis time, so nobody has to guess at coding time.
+intent-gate's stance is **judgment stays with the host, discipline is enforced by code**:
 
 - Semantic judgment (what kind of gap is this, is it a gap at all) is done at full
   strength by the host agent — the MCP never second-guesses it;
@@ -42,6 +53,8 @@ intent-gate's answer is **judgment stays with the host, discipline is enforced b
   no delivery with mechanical errors) is mechanically enforced by MCP tools.
   **Files are the single source of truth**; the process lives and dies with the session
   without losing state, and is naturally resilient to context compaction.
+
+What the coding agent receives at the end is a contract, not a guessing puzzle.
 
 ## Where it sits in a vibe-coding workflow
 
@@ -58,40 +71,6 @@ The leverage is asymmetric: **if the contracts land well, the coding stage is a 
 win** — every edge, step and rule already has a home, so any competent agent can
 implement the spec. That is why intent-gate deliberately does NOT touch coding,
 review or deployment: downstream agents are interchangeable; the input contract is not.
-
-## Where intent confidence comes from (the epistemological foundation)
-
-**Intent confidence is not the model's self-assessment — it is the closure state of
-artifacts.**
-
-Asking a model to rate "how sure are you" is a dead channel: verbal confidence barely
-correlates with actual correctness (it's post-hoc rationalization, not a reading);
-token-level logprobs can't reach semantic-layer uncertainty ("should there be an
-intermediate state after a refund?") and the API doesn't expose them anyway. So this
-system never asks the model for a score — **it makes the model produce, and reads the
-confidence off the artifacts**.
-
-Drawing diagrams (state machines / sequence diagrams / decision tables) is a
-**measuring instrument, not a means of expression**: what natural language can fudge,
-formalization cannot — "after the refund is processed, it's done" is one sentence, but
-in a state machine you must answer whether REFUNDING has an outgoing edge, where it
-points, and on what trigger. Every edge is a forced discrete decision; vague intent is
-invisible in prose but a hole on an edge.
-
-Gaps come in four kinds, each with its own detector — "can't draw it" is only layer one:
-
-| Layer | Mechanism | What it catches |
-|---|---|---|
-| ① Forced formalization | Draw the diagram; mark wherever you can't | **Perceived gaps** — the model knows it doesn't know |
-| ② Taxonomy sweep | A nine-category ambiguity checklist (exception paths / rollback / condition combinations / field semantics / idempotency & privilege / terminology…) | **Semi-silent gaps** — the model won't stall on its own, but sweeping element-by-element with the checklist exposes them |
-| ③ Mechanical lint | L1 no successful terminal state / L2 dead states / L6 table has no writes… | **Fully silent gaps** — places the model filled in without any awareness; enforced by code, zero reliance on self-discipline |
-| ④ Blue-team independent review | Independent session + information diet (optional skill) | **Systematic blind spots of the author's attention** — layers ①–③ are the same pair of eyes; this one swaps in a fresh pair |
-
-So a 🟢 green light doesn't mean "the model feels confident" — it means "every edge of
-the state machine is grounded, all nine minefields swept, lint CRITICALs at zero, and a
-human has ruled on every gap." **Confidence is a property of the graph, not of the
-model.** Drawing is the instrument, lint is the calibrator, human rulings are the
-reference source.
 
 ## Core mechanisms
 
@@ -135,6 +114,40 @@ use `autonumber` + passed-variable annotations, and rule logic is forced into
 decision-table matrices. What the coding agent receives is not an illustration but a
 spec where every edge maps to explicit implementation actions — the guessing space is
 structurally compressed.
+
+## Why confidence is read off artifacts (the epistemology)
+
+**Intent confidence is not the model's self-assessment — it is the closure state of
+artifacts.**
+
+Asking a model to rate "how sure are you" is a dead channel: verbal confidence barely
+correlates with actual correctness (it's post-hoc rationalization, not a reading);
+token-level logprobs can't reach semantic-layer uncertainty ("should there be an
+intermediate state after a refund?") and the API doesn't expose them anyway. So this
+system never asks the model for a score — **it makes the model produce, and reads the
+confidence off the artifacts**.
+
+Drawing diagrams (state machines / sequence diagrams / decision tables) is a
+**measuring instrument, not a means of expression**: what natural language can fudge,
+formalization cannot — "after the refund is processed, it's done" is one sentence, but
+in a state machine you must answer whether REFUNDING has an outgoing edge, where it
+points, and on what trigger. Every edge is a forced discrete decision; vague intent is
+invisible in prose but a hole on an edge.
+
+Gaps come in four kinds, each with its own detector — "can't draw it" is only layer one:
+
+| Layer | Mechanism | What it catches |
+|---|---|---|
+| ① Forced formalization | Draw the diagram; mark wherever you can't | **Perceived gaps** — the model knows it doesn't know |
+| ② Taxonomy sweep | A nine-category ambiguity checklist (exception paths / rollback / condition combinations / field semantics / idempotency & privilege / terminology…) | **Semi-silent gaps** — the model won't stall on its own, but sweeping element-by-element with the checklist exposes them |
+| ③ Mechanical lint | L1 no successful terminal state / L2 dead states / L6 table has no writes… | **Fully silent gaps** — places the model filled in without any awareness; enforced by code, zero reliance on self-discipline |
+| ④ Blue-team independent review | Independent session + information diet (optional skill) | **Systematic blind spots of the author's attention** — layers ①–③ are the same pair of eyes; this one swaps in a fresh pair |
+
+So a 🟢 green light doesn't mean "the model feels confident" — it means "every edge of
+the state machine is grounded, all nine minefields swept, lint CRITICALs at zero, and a
+human has ruled on every gap." **Confidence is a property of the graph, not of the
+model.** Drawing is the instrument, lint is the calibrator, human rulings are the
+reference source.
 
 ## Skill trigger map (after installation, which scenario auto-uses which)
 
@@ -199,6 +212,9 @@ transport layer; the file ledger does not depend on it to survive.
 Blocking emergency human escalation during coding (the `ask_human` decision gate)
 lives in intent-gate-service too — **all heavy interaction that blocks waiting for a
 human reply is in the sister project**; the main plugin is always non-blocking.
+
+Split out since v0.2.0 — the main plugin keeps only intent alignment and requirement
+analysis, with zero DingTalk dependencies.
 
 ## Quick start
 
