@@ -43,6 +43,22 @@ intent-gate's answer is **judgment stays with the host, discipline is enforced b
   **Files are the single source of truth**; the process lives and dies with the session
   without losing state, and is naturally resilient to context compaction.
 
+## Where it sits in a vibe-coding workflow
+
+intent-gate is **application-layer harness engineering** — it owns exactly one stage
+of the pipeline, the requirement-analysis stage:
+
+```
+PRD ──▶ [ intent-gate: confidence gate → intent alignment → Mermaid contracts ]
+          ──▶ summary.md (every edge technically annotated, lint CRITICAL = 0)
+          ──▶ coding agent (Claude Code / Cursor / any agent) ──▶ tests ──▶ ship
+```
+
+The leverage is asymmetric: **if the contracts land well, the coding stage is a free
+win** — every edge, step and rule already has a home, so any competent agent can
+implement the spec. That is why intent-gate deliberately does NOT touch coding,
+review or deployment: downstream agents are interchangeable; the input contract is not.
+
 ## Where intent confidence comes from (the epistemological foundation)
 
 **Intent confidence is not the model's self-assessment — it is the closure state of
