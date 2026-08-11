@@ -19,36 +19,9 @@ CRITICAL 归零 → 才允许编码开工。
 以 **MCP server（stdio 子进程）** 形态运行，Claude Code 等即插即用；
 **无常驻、无凭据、零配置**，跑通全流程。
 
-## 痛点
-
-编码 agent 会猜——而且专挑最疼的地方猜：
-
-- **复杂业务需求**：密集分支、资金流转、实体生命周期。编码时 agent 的注意力在
-  代码生成上，"只有成功没有失败流""防重复无服务端方案"这类断层，被顺手猜一个
-  合理实现混过去。
-- **需求文档质量不高**：模糊、矛盾、缺数据源。agent 不停下来问，它自行插值。
-- **没有旧代码可参考**：全新项目或整体重写，代码库里没有 ground truth 可锚定，
-  每个歧义都是一次抛硬币。
-
-宿主自带的意图弹窗（AskUserQuestion 之类）也救不了：判断是临时的、答案是易逝的——
-上下文一压缩、会话一结束，对齐现场就没了。
-
-**代码幻觉的重要来源不是模型能力，是意图断层在编码阶段被猜测填补。**
-
-## 方案：意图对齐前置到需求解析阶段
-
-在解析阶段把意图裁决掉，编码阶段就没人需要猜。intent-gate 的立场是**判断归宿主、
-纪律归代码**：
-
-- 语义判断（这是什么灯、这是不是断层）由宿主 agent 满血完成，MCP 不越俎代庖；
-- 纪律（断层不许静默丢弃、答案不许核销不落点、交付不许带机械错误）由 MCP 工具
-  机械强制，**文件是唯一事实源**，进程随会话生死不丢现场，天然抗上下文压缩。
-
-编码 agent 最终拿到的是契约，不是猜谜题。
-
 ## 它在 vibe coding 工作流里的位置
 
-intent-gate 是**应用层 Harness Engineering** 的一块——它只占管线的一个阶段：需求解析。
+intent-gate 只占管线的一个阶段：需求解析。
 
 ```
 PRD ──▶【intent-gate：置信度门禁 → 意图对齐 → mermaid 契约】
@@ -59,6 +32,103 @@ PRD ──▶【intent-gate：置信度门禁 → 意图对齐 → mermaid 契�
 杠杆是不对称的：**契约落得好，编码阶段就是白给的**——每条边、每个步骤、每条规则
 都有了着落，换个像样的 agent 都能实现。所以 intent-gate 刻意不碰编码/评审/部署：
 下游 agent 是可替换的，输入契约不可替代。
+
+## 真实实践：提现确认页
+
+一个真实需求走完 intent-gate 全流程的样子。
+
+**需求一句话**：
+
+> 「提现确认页——展示借款信息、可修改期数、签名提交。要求防重、防过期、脱敏。」
+>
+> 没有更多细节。这正是编码 agent 开始猜的地方。
+
+**过程中发生了什么**：
+
+1. 分析器先画状态机，在「提交」处卡住：失败怎么办？防重在服务端还是前端？
+2. 🔴 红灯题逐题问你（一次一个，≥3 个互斥选项）：「连点 / 刷新重提如何防？」
+3. 你拍板：「服务端 Redisson 锁，wait 10s / lease 300s」→ 原话逐字落账 → 注入状态机边与决策表 BR-01
+4. 交付前 lint 机械自检：**CRITICAL 0** 才放行。
+
+**产出：带技术打标的 mermaid 契约**（完整状态机）：
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> WITHDRAW_CONFIRM: 进入确认页 (DB_QUERY_SIGN_ORDER, CHANNEL_ROUTING_QUERY)
+    WITHDRAW_CONFIRM --> OPTIONAL_PERIOD_LOADING: 请求可选期数 (DECISION_GET_OPTIONAL_PERIOD)
+    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取成功 (RETURN_PERIOD_LIST)
+    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取失败 (RETURN_ERROR, PERIOD_EDIT_DISABLED)
+    WITHDRAW_CONFIRM --> ROUTING_PROCESSING: 修改期数或金额 (DB_INSERT_SIGN_ORDER_CHANNEL, DB_UPDATE_SIGN_ORDER)
+    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由成功 (DB_UPDATE_SIGN_ORDER_CHANNEL, RETURN_NEW_QUOTE)
+    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
+    WITHDRAW_CONFIRM --> EXPIRED: 签署时效超时 (RETURN_ERROR_CODE, GUIDE_REENTER)
+    EXPIRED --> [*]: 引导回首页 (FRONTEND_NAVIGATE)
+    WITHDRAW_CONFIRM --> SUBMITTING: 点击确认借款 (REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)
+    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SIGN_ORDER, QUERY_CURRENT_STEP)
+    SUBMITTING --> WITHDRAW_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
+    SUBMITTING --> TERMINATE: 流程激活失败 (DB_UPDATE_WITHDRAW_STATUS_TERMINATE)
+    STEP_QUERY --> LOADING: WithdrawStep=loading (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAYMENT_AUTH: WithdrawStep=paymentAuth (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAY_CHANNEL: WithdrawStep=payChannel (RETURN_NEXT_STEP)
+    STEP_QUERY --> QUERY_PROGRESS: WithdrawStep=queryProgress (RETURN_NEXT_STEP)
+    STEP_QUERY --> WITHDRAW_CONFIRM: WithdrawStep=withdrawConfirm (STAY_ON_PAGE)
+    LOADING --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    PAYMENT_AUTH --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    PAY_CHANNEL --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    QUERY_PROGRESS --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    SUCCESS --> [*]: 确认流程结束 (END)
+    TERMINATE --> [*]: 订单终止 (END)
+```
+
+每条边都强制带技术动作打标——`WITHDRAW_CONFIRM --> SUBMITTING` 写着
+`(REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)`。编码 agent 拿到的是规格，不是示意图。
+
+**决策表**（规则逻辑强制成矩阵，防"只有成功路径"）：
+
+| 规则编号 | 条件 | 动作 | 异常分支 |
+|---|---|---|---|
+| BR-01 | 提交借款：`LOCK:withdraw:submit:{orderId}` 锁冲突 | Redisson 锁串行化，同单并发拒绝 | 锁冲突 → 错误码 `DUPLICATE_SUBMIT` |
+| BR-07 | 签署时效 `signExpireTime` | 5 分钟双保险：页面倒计时 + 提交时服务端兜底 | 过期 → `SIGN_EXPIRED`，引导重进 |
+
+完整契约：10 条业务规则（BR-01~BR-10）+ 3 张时序图 + 意图注入映射表（15 条问答全部留痕）。
+
+**lint 机械门禁**（交付前自检报告）：
+
+> `summary_lint：CRITICAL 0 / 共 2 条`（全部 MINOR 人工复核类）
+>
+> - `[MINOR][L3]` 状态 STEP_QUERY 有 5 条出边，需人工确认触发条件可区分
+> - `[MINOR][L3]` 状态 SUBMITTING 有 3 条出边，需人工确认触发条件可区分
+
+CRITICAL 未归零，契约不许交付、编码不许开工——**这是代码检查的，不是模型自报的。**
+
+**同一个需求，没有 intent-gate 时**（对照组实测）：
+
+| 维度 | 没有 intent-gate，agent 会猜 | 契约里写死的 |
+|---|---|---|
+| 防重 | 前端按钮置灰防连点 | 服务端分布式锁 `LOCK:withdraw:submit:{orderId}`（BR-01） |
+| 提交后分流 | 前端写死跳成功页 | 按 `queryCurrentStep` 返回的 `{withdrawStep, url}` 动态跳转 |
+| 失败流 | 只有成功路径，"失败？不会发生" | `SUBMITTING` 三条出边：可重试回确认页 / `TERMINATE` 终止 / 成功进 `STEP_QUERY` |
+| 过期 | 没想到 | `EXPIRED` 状态 + 5 分钟双保险 + `SIGN_EXPIRED` 错误码（BR-07） |
+
+## 怎么用：张嘴说什么
+
+装完之后全靠大白话驱动。这张表就是全部说明书：
+
+| 你说 | 谁接活 | 发生什么 |
+|---|---|---|
+| "分析这个需求 / 帮我解析这个 PRD"（贴文档或指文件） | 🔴 红军（`requirement-alignment`） | 先读 playbook，跑 Step 0 置信度评估，然后逐题向你结构化提问（≥3 选项 + "其他"），一次一个断层 |
+| "画个状态机 / 生成 DDL" | 🔴 红军 | 同一个入口——型态路由自动判定你的需求需要哪几张图 |
+| "继续"（中断后/新会话） | 🔴 红军 | 从磁盘账本（`.harness/requests/{需求名}/_review/`）续跑，不依赖会话记忆 |
+| 回答它的提问："1"，或 "4 余额不足一律拒绝" | 对齐漏斗 | 原话逐字落账 → 注入图/规则 → 带精确落点核销 |
+| "红蓝对抗 / 蓝军评审"——**另开新会话说** | 🔵 蓝军（`red-blue-review`） | 对已交付的 summary 做独立对抗评审：R1-R9 九项检查 → findings，结论 PASS / FAIL-可整改 / FAIL-重做 |
+| "按 findings 整改"（回到红军的会话里说） | 🔴 红军整改纪律 | 每条 finding 落进 `revision-log.md`（整改动作 + 真实落点），lint 重跑 CRITICAL 归零；与你之前拍板冲突的，端回来请你裁决 |
+| 什么都不说，直接让它写代码 | SessionStart hook | 编码前 agent 自动读已落地的 `summary.md` 契约；`blocked` 或 lint 带 CRITICAL 的契约拒绝被编码 |
+
+两条值得记住的规矩：
+
+- **认真回答它的提问**——你的每个答案都会变成编码 agent 要执行的契约的一部分。
+- **蓝军必须另开新会话**——同会话评审会退化成自查。红军交付完，开个新对话，说一声"红蓝对抗"。
 
 ## 核心机制
 
@@ -71,36 +141,38 @@ PRD ──▶【intent-gate：置信度门禁 → 意图对齐 → mermaid 契�
 ① 代码实证：技术类断层先查代码，有唯一 ground truth 直接落账，零人际成本
 ② AI 公示推断：带显式依据链登记，会话末批量请人类点头（资金主流程禁止纯推断）
 ③ 人工拍板：结构化选项提问（≥3 互斥选项 + "其他"），一次一题
-   （装了姊妹篇 intent-gate-service 时，这一级可以发到钉钉群 @对应角色）
 ```
 
 **机械执法（MCP 工具强制，不靠 prompt 自觉）**：
 
 - 断层一旦登记物理落盘 `pending-questions.md`，勾不打完不给 `intent_aligned_ready`；
-- `resolve_question` 空落点机械拒收——每条注入意图必须精确到状态机的边、
-  时序图的步骤、决策表的规则号，找不到落点**禁止核销，必须回问**；
+- `resolve_question` 空落点机械拒收——每条注入意图必须精确到状态机的边、时序图的
+  步骤、决策表的规则号，找不到落点**禁止核销，必须回问**；
 - 落点锚点禁止手写，`draft_mapping` 脚本真实定位章节号/规则号/步骤号；
 - 交付前 `lint_summary` 机械自检（L0-L8：状态机解析失明兜底/成功终态/死状态/
   锚点错位/BR 引用/表读写矩阵……），**CRITICAL 归零才可交付**。
 
-**mermaid 即编码契约**：状态图每条边强制技术动作打标
-（`DRAFT --> PENDING: 提交 (IF校验, DB_INSERT, REDIS_ZSET)`），时序图 `autonumber`
-+ 传递变量标注，规则逻辑强制决策表矩阵。编码 agent 拿到的不是示意图，
-是每条边对应明确实现动作的规格——猜测空间被结构性压缩。
+## 意图置信度为什么从产物上读
 
-## 意图置信度为什么从产物上读（认识论地基）
+最直接的质疑是：**「Claude Code 自己就能生成 mermaid 图，甚至直接生成代码，
+干嘛要你的 MCP？」**
 
-**意图置信度不是模型的自我感觉，是 artifact 的闭合状态。**
+答案：**模型会画图 ≠ 意图对齐发生了。** 意图置信度不是模型的自我感觉，是
+**artifact 的闭合状态**。
 
-让模型自评"有几分把握"是条死通道：口头置信度和真实正确率几乎不相关
-（那是事后合理化，不是读数）；token 级 logprobs 够不着语义层的不确定
-（"退款后到底该不该有中间态"），且 API 根本不暴露。所以本系统从头到尾
-不让模型打分数——**让它生产，从产物上读数**。
+让模型自评"有几分把握"是条死通道：口头置信度和真实正确率几乎不相关（那是事后
+合理化，不是读数）；token 级 logprobs 够不着语义层的不确定（"退款后到底该不该有
+中间态"），且 API 根本不暴露。所以本系统从头到尾不让模型打分数——**让它生产，
+从产物上读数**。
 
-画图（状态机/时序图/决策表）是**探测仪器**，不是表达手段：
-自然语言能糊弄过去的，形式化糊弄不过去——"退款处理完就结束了"是一句话，
-状态机里你必须回答 REFUNDING 之后有没有边、指向谁、触发条件是什么；
-每一条边都是一次被迫的离散决策，模糊意图在散文里是隐形的，在边上是空洞。
+画图（状态机/时序图/决策表）是**探测仪器**，不是表达手段：自然语言能糊弄过去的，
+形式化糊弄不过去——"退款处理完就结束了"是一句话，状态机里你必须回答 REFUNDING
+之后有没有边、指向谁、触发条件是什么；每一条边都是一次被迫的离散决策，模糊意图
+在散文里是隐形的，在边上是空洞。
+
+同样一句话，由 Claude Code 自己画和由 intent-gate 的宿主画，差别在于：
+Claude Code 画完没人校验，意图断层原样留在图上；intent-gate 画完要过 lint、
+要逐题对齐、要人类拍板——**产出的每一格都是闭合的**。
 
 断层分四种，各有探测器，"画不下去"只是第一层：
 
@@ -115,55 +187,16 @@ PRD ──▶【intent-gate：置信度门禁 → 意图对齐 → mermaid 契�
 lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性，不是模型的属性。**
 画图是仪器，lint 是校准器，人类拍板是基准源。
 
-## Skill 触发地图（装了之后，什么场景自动用哪个）
+## 可选能力
 
-插件三个 skill 各有明确触发面，配合 SessionStart 注入的入口纪律工作：
-
-| Skill | 什么时候触发 | 它干什么 |
-|---|---|---|
-| `using-intent-gate` | **每个会话开局自动注入**（SessionStart hook） | 入口纪律：分析前必须先读 playbook、何时必须升级人工、两个可选能力（红蓝/钉钉）的位置；编码前必须读已落地的 summary 契约 |
-| `requirement-alignment` | 你让 agent **分析需求/PRD、画状态机/时序图/决策表、生成 DDL**，或中断后说"继续" | 三级对齐漏斗纲要：代码实证 → AI 公示推断 → 结构化提问；全程非阻塞，答案跨会话对账 |
-| `red-blue-review`（可选） | 你**点名**"红蓝对抗 / 蓝军评审 / 需求评审"，或 complex 需求交付后你点头同意 | 蓝军对抗审查：独立 session、信息节食，R1-R9 九项检查产出 findings 驱动整改闭环；`approved` 只有蓝军 PASS 或人类拍板两条路 |
-
-配套 MCP 工具（agent 自动调用，无需你干预）：`doc_analysis_playbook`(prompt)
-/ `analyze_requirement` / `record_judgment` / `lint_summary` / `draft_mapping`
-/ `dispatch_question` / `collect_answers` / `resolve_question` / `record_inference`
-/ `confirm_inferences` / `rebroadcast_pending` / `list_pending_questions` / `abandon_*`。
-
-> 你唯一需要记住的操作面：**分析需求时让它先读 playbook；它提问时认真答；
-> complex 交付后想要对抗评审就说一声"红蓝"。**
-
-## 可选：红蓝对抗评审（插件 skill）
-
-红军（需求分析）交付 complex 产物后，可选启动**蓝军对抗评审**：
-独立 session、信息不对称（蓝军只读产物不看红军推理），按 R1-R9 九项检查
-（注入保真/降级合规/歧义漏判/跨图一致性……）产出 findings，驱动有纪律的整改闭环；
-`status` 转 `approved` 只有两条路——蓝军 PASS，或人类直接拍板，红军永远不自授。
-
-- 触发：人类点名（"红蓝对抗 / 蓝军评审"），或 complex 交付后人类点头；
-  simple/medium 直接 PASS 放行。
-- 形态：纯插件 skill（`skills/red-blue-review/`），**不进 MCP 工具面**——
-  蓝军有效性依赖信息节食，同一进程内做评审会把对抗退化成自查。
-- 熔断：最多 2 轮，仍 FAIL 标 `ESCALATE` 交人类裁决，禁止无限抛光。
-- 红军整改同样有门禁（skill §5.5）：每条 finding 在 `_review/revision-log.md`
-  落账（整改动作 + 真实落点），交付第 2 轮前 lint 重跑 CRITICAL 归零；
-  整改自身引入的新造词必须发题确认；finding 与已注入的人类意图冲突时，
-  红军必须出示冲突请人类裁决——禁止自行二选一。
-
-## 姊妹篇：intent-gate-service（钉钉群共识通道 + 决策闸门）
-
-意图对齐的瓶颈不是"怎么问"，是**问谁**——业务断层归业务人员，技术断层归技术人员。
-默认 single 通道下断层由对话框前的人逐题回答，全程不碰钉钉；
-装了 [intent-gate-service](https://github.com/baixinghao/intent-gate-service)（独立 MCP 服务）后，漏斗第③级可发钉钉群
-@对应角色，回复经回调落盘 inbox，由 intent-gate 的 `collect_answers` 领取。
-
-群通道的真正价值是**留痕**：群里的回答带 staffId、带原话、公开可见，
-谁拍的板有据可查，**群里无人反驳 ≈ 共识**。钉钉只是传输层，文件账本不依赖它存活。
-
-编码期的阻塞式紧急人工升级（`ask_human` 决策闸门）同样在 intent-gate-service——
-**会卡住等待人工回复的重交互全部在姊妹篇**，主插件永远非阻塞。
-
-自 v0.2.0 起剥离——主插件只保留意图对齐与需求解析，零钉钉依赖。
+- **红蓝对抗评审**（`red-blue-review` skill）：complex 需求交付后，可选开一个
+  独立 session 做对抗审查——蓝军只读产物不看推理（信息节食），按 R1-R9 九项检查
+  产出 findings 驱动整改；`approved` 只有蓝军 PASS 或人类直接拍板两条路，红军
+  永远不自授。熔断最多 2 轮，仍 FAIL 标 `ESCALATE` 交人类。
+- **钉钉群共识通道**（姊妹篇 [intent-gate-service](https://github.com/baixinghao/intent-gate-service)，独立 MCP 服务）：
+  业务断层归业务人员、技术断层归技术人员——漏斗第③级可发钉钉群 @对应角色，
+  回复经回调落盘 inbox 领取。群通道的价值是**留痕**：回答带 staffId、带原话、
+  公开可见，**群里无人反驳 ≈ 共识**。主插件默认 single 通道，零配置即用。
 
 ## 快速开始（Claude Code —— 两步）
 
@@ -184,26 +217,6 @@ claude plugin install intent-gate@baixinghao-plugins
 > 没有问题账本、没有 lint、没有交付拦截。SessionStart hook 每局自检：
 > 发现 server 缺席，agent 会主动提醒你去跑第 1 步。
 
-## 怎么用：张嘴说什么
-
-装完之后全靠大白话驱动。这张表就是全部说明书：
-
-| 你说 | 谁接活 | 发生什么 |
-|---|---|---|
-| "分析这个需求 / 帮我解析这个 PRD"（贴文档或指文件） | 🔴 红军（`requirement-alignment`） | 先读 playbook，跑 Step 0 置信度评估，然后逐题向你结构化提问（≥3 选项 + "其他"），一次一个断层 |
-| "画个状态机 / 生成 DDL" | 🔴 红军 | 同一个入口——型态路由自动判定你的需求需要哪几张图 |
-| "继续"（中断后/新会话） | 🔴 红军 | 从磁盘账本（`.harness/requests/{需求名}/_review/`）续跑，不依赖会话记忆 |
-| 回答它的提问："1"，或 "4 余额不足一律拒绝" | 对齐漏斗 | 原话逐字落账 → 注入图/规则 → 带精确落点核销 |
-| "红蓝对抗 / 蓝军评审"——**另开新会话说** | 🔵 蓝军（`red-blue-review`） | 对已交付的 summary 做独立对抗评审：R1-R9 九项检查 → findings，结论 PASS / FAIL-可整改 / FAIL-重做 |
-| "按 findings 整改"（回到红军的会话里说） | 🔴 红军整改纪律（§5.5） | 每条 finding 落进 `revision-log.md`（整改动作 + 真实落点），lint 重跑 CRITICAL 归零；与你之前拍板冲突的，端回来请你裁决 |
-| 什么都不说，直接让它写代码 | SessionStart hook | 编码前 agent 自动读已落地的 `summary.md` 契约；`blocked` 或 lint 带 CRITICAL 的契约拒绝被编码 |
-
-两条值得记住的规矩：
-
-- **认真回答它的提问**——你的每个答案都会变成编码 agent 要执行的契约的一部分。
-- **蓝军必须另开新会话**——同会话评审会退化成自查。红军交付完，开个新对话，
-  说一声"红蓝对抗"。
-
 ## 其他 MCP client
 
 同样先跑第 1 步装好 server，然后把客户端指向 `intent-gate` 命令：
@@ -222,7 +235,6 @@ claude plugin install intent-gate@baixinghao-plugins
 以 **SSE** 暴露 MCP。
 
 **零配置即可使用全部意图对齐能力**（single 通道，对话框兜底）。
-钉钉群通道见 [intent-gate-service README](https://github.com/baixinghao/intent-gate-service)。
 
 ## 开发（克隆仓库）
 
@@ -254,7 +266,7 @@ src/intent_gate/
 │   ├── engine.py                 #   现场判定 / 宿主判断落账
 │   ├── lint.py                   #   分析报告机械检查器（L0-L8 + 三矩阵）
 │   ├── mapper.py                 #   意图注入映射表锚点定位
-│   └── tools.py                #   MCP 工具注册（分析工具 + playbook prompt）
+│   └── tools.py                  #   MCP 工具注册（分析工具 + playbook prompt）
 skills/
 ├── using-intent-gate/             # 入口纪律：何时升级人工、两个可选能力的位置
 ├── requirement-alignment/        # 意图对齐工作流纲要 → 指向 MCP prompt

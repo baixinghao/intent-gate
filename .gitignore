@@ -20,6 +20,7 @@ venv/
 .claude/
 .kimi/
 .reasonix/
+reasonix.toml
 
 # Reference copies of third-party projects (not ours, never publish)
 _ref/

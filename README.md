@@ -22,44 +22,9 @@ zero CRITICAL → only then is coding allowed to begin.
 It runs as an **MCP server (stdio subprocess)** — plug-and-play with Claude Code and
 other MCP clients. **No daemon, no credentials, zero config** — full workflow out of the box.
 
-## The problem
-
-Coding agents guess — and they guess most where it hurts most:
-
-- **Complex business requirements** — dense branches, money flows, entity lifecycles.
-  The agent's attention is on code generation, so gaps like "only a happy path, no
-  failure flow" or "idempotency with no server-side design" get silently papered
-  over with a plausible-looking guess.
-- **Low-quality PRDs** — vague, contradictory, missing data sources. The agent
-  doesn't stop and ask; it interpolates.
-- **No legacy code to reference** — greenfield or a full rewrite: the codebase holds
-  no ground truth to anchor against, so every ambiguity becomes a coin flip.
-
-The host's built-in intent prompts (AskUserQuestion-style) don't fix this either:
-the judgment is ad hoc and the answers are ephemeral — one context compaction or
-session end, and the alignment state is gone.
-
-**A major source of code hallucination is not model capability — it is intent gaps
-getting resolved by guessing at coding time.**
-
-## The answer: intent alignment, front-loaded
-
-Rule on intent at analysis time, so nobody has to guess at coding time.
-intent-gate's stance is **judgment stays with the host, discipline is enforced by code**:
-
-- Semantic judgment (what kind of gap is this, is it a gap at all) is done at full
-  strength by the host agent — the MCP never second-guesses it;
-- Discipline (no silently dropping gaps, no closing an answer without a landing point,
-  no delivery with mechanical errors) is mechanically enforced by MCP tools.
-  **Files are the single source of truth**; the process lives and dies with the session
-  without losing state, and is naturally resilient to context compaction.
-
-What the coding agent receives at the end is a contract, not a guessing puzzle.
-
 ## Where it sits in a vibe-coding workflow
 
-intent-gate is **application-layer harness engineering** — it owns exactly one stage
-of the pipeline, the requirement-analysis stage:
+intent-gate owns exactly one stage of the pipeline, the requirement-analysis stage:
 
 ```
 PRD ──▶ [ intent-gate: confidence gate → intent alignment → Mermaid contracts ]
@@ -71,6 +36,109 @@ The leverage is asymmetric: **if the contracts land well, the coding stage is a 
 win** — every edge, step and rule already has a home, so any competent agent can
 implement the spec. That is why intent-gate deliberately does NOT touch coding,
 review or deployment: downstream agents are interchangeable; the input contract is not.
+
+## A real run: the withdrawal confirmation page
+
+What one real requirement looks like after a full intent-gate pass.
+
+**The requirement, in one sentence:**
+
+> "A withdrawal confirmation page — show the loan details, allow changing the term,
+> sign and submit. Must be duplicate-proof, expiry-proof, and masked."
+>
+> That's it. Exactly where a coding agent starts guessing.
+
+**What happened along the way:**
+
+1. The analyzer drew the state machine first — and stalled at "submit": what about
+   failure? Should duplicate protection live on the server or the frontend?
+2. 🔴 Red-light questions were asked one at a time (≥3 mutually exclusive options):
+   "How do you guard against double-submit on rapid clicks / refresh?"
+3. You ruled: **"Server-side Redisson lock, wait 10s / lease 300s"** → your words
+   were logged verbatim → injected into the state-machine edge and decision-table BR-01.
+4. A mechanical lint gate ran before delivery: **CRITICAL = 0** or it does not ship.
+
+**The output: a technically annotated Mermaid contract** (full state machine):
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> WITHDRAW_CONFIRM: 进入确认页 (DB_QUERY_SIGN_ORDER, CHANNEL_ROUTING_QUERY)
+    WITHDRAW_CONFIRM --> OPTIONAL_PERIOD_LOADING: 请求可选期数 (DECISION_GET_OPTIONAL_PERIOD)
+    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取成功 (RETURN_PERIOD_LIST)
+    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取失败 (RETURN_ERROR, PERIOD_EDIT_DISABLED)
+    WITHDRAW_CONFIRM --> ROUTING_PROCESSING: 修改期数或金额 (DB_INSERT_SIGN_ORDER_CHANNEL, DB_UPDATE_SIGN_ORDER)
+    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由成功 (DB_UPDATE_SIGN_ORDER_CHANNEL, RETURN_NEW_QUOTE)
+    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
+    WITHDRAW_CONFIRM --> EXPIRED: 签署时效超时 (RETURN_ERROR_CODE, GUIDE_REENTER)
+    EXPIRED --> [*]: 引导回首页 (FRONTEND_NAVIGATE)
+    WITHDRAW_CONFIRM --> SUBMITTING: 点击确认借款 (REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)
+    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SIGN_ORDER, QUERY_CURRENT_STEP)
+    SUBMITTING --> WITHDRAW_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
+    SUBMITTING --> TERMINATE: 流程激活失败 (DB_UPDATE_WITHDRAW_STATUS_TERMINATE)
+    STEP_QUERY --> LOADING: WithdrawStep=loading (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAYMENT_AUTH: WithdrawStep=paymentAuth (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAY_CHANNEL: WithdrawStep=payChannel (RETURN_NEXT_STEP)
+    STEP_QUERY --> QUERY_PROGRESS: WithdrawStep=queryProgress (RETURN_NEXT_STEP)
+    STEP_QUERY --> WITHDRAW_CONFIRM: WithdrawStep=withdrawConfirm (STAY_ON_PAGE)
+    LOADING --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    PAYMENT_AUTH --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    PAY_CHANNEL --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    QUERY_PROGRESS --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    SUCCESS --> [*]: 确认流程结束 (END)
+    TERMINATE --> [*]: 订单终止 (END)
+```
+
+Every edge carries a mandatory technical-action annotation — the edge
+`WITHDRAW_CONFIRM --> SUBMITTING` reads `(REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)`.
+What the coding agent receives is a spec, not an illustration.
+
+**Decision table** (rule logic forced into a matrix — no "happy path only" survival):
+
+| Rule | Condition | Action | Failure branch |
+|---|---|---|---|
+| BR-01 | Submit: lock `LOCK:withdraw:submit:{orderId}` conflict | Redisson lock serializes, concurrent submits rejected | Lock conflict → error code `DUPLICATE_SUBMIT` |
+| BR-07 | Signing deadline `signExpireTime` | 5-minute double check: page countdown + server-side fallback on submit | Expired → `SIGN_EXPIRED`, guide re-entry |
+
+The full contract: 10 business rules (BR-01..BR-10) + 3 sequence diagrams + an
+intent-injection mapping table (15 Q&A rounds, every answer on record).
+
+**The mechanical lint gate** (pre-delivery self-check report):
+
+> `summary_lint: CRITICAL 0 / 2 findings total` (all MINOR, human-review class)
+>
+> - `[MINOR][L3]` state STEP_QUERY has 5 outgoing edges — confirm triggers are distinguishable
+> - `[MINOR][L3]` state SUBMITTING has 3 outgoing edges — confirm triggers are distinguishable
+
+With CRITICAL > 0 the contract refuses to ship and coding refuses to start — **this is
+checked by code, not self-reported by the model.**
+
+Same requirement without intent-gate (observed in our control run): the agent would front-end-disable the submit
+button instead of designing a server-side distributed lock, hardcode a success page
+instead of routing by `queryCurrentStep`, and never model the `EXPIRED` state at all.
+The guessing space is structurally compressed, not politely discouraged.
+
+## Using it: what to say
+
+Once installed, you drive it with plain language. This table is the whole manual:
+
+| You say | Who picks it up | What happens |
+|---|---|---|
+| "分析这个需求 / analyze this PRD"（贴文档或指文件） | 🔴 Red team（`requirement-alignment`） | Reads the playbook first, runs the Step 0 confidence check, then asks you structured questions (≥3 options + "other"), one gap at a time |
+| "画个状态机 / 生成 DDL" | 🔴 Red team | Same entry — pattern routing decides which diagrams your requirement actually needs |
+| "继续"（中断后/新会话） | 🔴 Red team | Resumes from the on-disk ledger (`.harness/requests/{feature}/_review/`) — no session memory needed |
+| 回答它的提问："1"，或 "4 余额不足一律拒绝" | the funnel | Answer logged verbatim → injected into the diagrams → settled with a precise landing point |
+| "红蓝对抗 / blue-team review" —— **另开新会话说** | 🔵 Blue team（`red-blue-review`） | Independent adversarial review of the delivered summary: R1–R9 checks → findings with verdict PASS / FAIL-可整改 / FAIL-重做 |
+| "按 findings 整改"（回到红军的会话里说） | 🔴 Red team revision discipline | Each finding settled into `revision-log.md` with a real landing point, lint re-runs to zero CRITICAL; anything conflicting with your earlier rulings comes back to you for a decision |
+| 什么都不说，直接让它写代码 | SessionStart hook | The agent reads the landed `summary.md` contract before coding; `blocked` or lint-CRITICAL contracts refuse to be coded against |
+
+Two rules worth remembering:
+
+- **Answer its questions seriously** — every answer becomes part of the contract
+  your coding agent will execute against.
+- **The blue team needs a fresh session** — reviewing in the same session degrades
+  adversarial review into self-check. Deliver with the red team, then open a new
+  conversation and say "红蓝对抗".
 
 ## Core mechanisms
 
@@ -89,8 +157,6 @@ non-blocking throughout:
   by a human at session end (pure inference is forbidden on money-critical main flows)
 ③ Human ruling: structured-option questions (≥3 mutually exclusive options + "other"),
   one question at a time
-  (with the sister project intent-gate-service installed, this level can be sent to a
-  DingTalk group @ the corresponding role)
 ```
 
 **Mechanical enforcement (enforced by MCP tools, not by prompt self-discipline)**:
@@ -107,18 +173,13 @@ non-blocking throughout:
   (blind-guard) / missing terminal state / dead states / misplaced anchors / BR
   references / table read-write matrix…), **CRITICALs must reach zero before delivery**.
 
-**Mermaid as the coding contract**: every edge of a state diagram carries mandatory
-technical-action annotations
-(`DRAFT --> PENDING: Submit (IF validation, DB_INSERT, REDIS_ZSET)`), sequence diagrams
-use `autonumber` + passed-variable annotations, and rule logic is forced into
-decision-table matrices. What the coding agent receives is not an illustration but a
-spec where every edge maps to explicit implementation actions — the guessing space is
-structurally compressed.
+## Why confidence is read off artifacts
 
-## Why confidence is read off artifacts (the epistemology)
+The obvious challenge: **"Claude Code can already generate Mermaid diagrams — even
+generate code — why do I need your MCP?"**
 
-**Intent confidence is not the model's self-assessment — it is the closure state of
-artifacts.**
+Answer: **a model drawing a diagram is not intent alignment.** Intent confidence is
+not the model's self-assessment — it is the closure state of artifacts.
 
 Asking a model to rate "how sure are you" is a dead channel: verbal confidence barely
 correlates with actual correctness (it's post-hoc rationalization, not a reading);
@@ -133,6 +194,11 @@ formalization cannot — "after the refund is processed, it's done" is one sente
 in a state machine you must answer whether REFUNDING has an outgoing edge, where it
 points, and on what trigger. Every edge is a forced discrete decision; vague intent is
 invisible in prose but a hole on an edge.
+
+The difference between "Claude Code drawing it" and "the intent-gate host drawing it":
+after Claude Code draws, nobody verifies — intent gaps stay on the diagram as-is;
+after intent-gate draws, the output must pass lint, every gap goes through alignment,
+and a human rules on each one — **every cell of the artifact is closed**.
 
 Gaps come in four kinds, each with its own detector — "can't draw it" is only layer one:
 
@@ -149,72 +215,23 @@ human has ruled on every gap." **Confidence is a property of the graph, not of t
 model.** Drawing is the instrument, lint is the calibrator, human rulings are the
 reference source.
 
-## Skill trigger map (after installation, which scenario auto-uses which)
+## Optional add-ons
 
-The plugin's three skills each have a clear trigger surface, working together with the
-entry discipline injected at SessionStart:
-
-| Skill | When it triggers | What it does |
-|---|---|---|
-| `using-intent-gate` | **Auto-injected at the start of every session** (SessionStart hook) | Entry discipline: read the playbook before any analysis, when escalation to a human is mandatory, where the two optional capabilities (red-blue / DingTalk) live; read the landed summary contract before coding |
-| `requirement-alignment` | You ask the agent to **analyze a requirement/PRD, draw state machines / sequence diagrams / decision tables, or generate DDL**, or you say "continue" after an interruption | The three-level alignment funnel outline: code-grounded verification → AI-disclosed inference → structured questioning; non-blocking throughout, answers reconciled across sessions |
-| `red-blue-review` (optional) | You **explicitly say** "red-blue / blue-team review / requirement review", or you nod after a complex delivery | Blue-team adversarial review: independent session, information diet, R1–R9 nine checks produce findings and drive a gated rectification loop; `approved` comes only from a blue-team PASS or a direct human ruling |
-
-Companion MCP tools (called by the agent automatically, no action needed from you):
-`doc_analysis_playbook` (prompt) / `analyze_requirement` / `record_judgment` /
-`lint_summary` / `draft_mapping` / `dispatch_question` / `collect_answers` /
-`resolve_question` / `record_inference` / `confirm_inferences` /
-`rebroadcast_pending` / `list_pending_questions` / `abandon_*`.
-
-> The only operational surface you need to remember: **when analyzing a requirement,
-> have it read the playbook first; answer its questions carefully; after a complex
-> delivery, say "red-blue" if you want an adversarial review.**
-
-## Optional: red-blue adversarial review (plugin skill)
-
-After the red team (requirement analysis) delivers a complex artifact, you can
-optionally start a **blue-team adversarial review**: an independent session with
-information asymmetry (the blue team reads only the artifacts, not the red team's
-reasoning), running the R1–R9 nine checks (injection fidelity / degradation
-compliance / missed ambiguities / cross-diagram consistency…) to produce findings
-that drive a disciplined rectification loop; `status` turns `approved` via exactly
-two paths — a blue-team PASS or a direct human ruling. The red team never self-grants.
-
-- Trigger: a human calls it by name ("red-blue / blue-team review"), or a human nods
-  after a complex delivery; simple/medium passes straight through.
-- Form: a pure plugin skill (`skills/red-blue-review/`), **kept out of the MCP tool
-  surface** — blue-team validity depends on the information diet; reviewing in the
-  same process would degrade adversarial review into self-checking.
-- Circuit breaker: at most 2 rounds; still FAIL → marked `ESCALATE` for human ruling;
-  infinite polishing is forbidden.
-- Red-team rectification is gated too (skill §5.5): every finding is settled in
-  `_review/revision-log.md` with a real landing point; lint re-runs to zero CRITICAL
-  before round 2; new terms coined by the fix itself must be confirmed via a dispatched
-  question; and when a finding conflicts with an already-injected human decision, the
-  red team must table the conflict for a human ruling — never pick one silently.
-
-## Sister project: intent-gate-service (DingTalk group consensus channel + decision gates)
-
-The bottleneck of intent alignment is not "how to ask" but **who to ask** — business
-gaps belong to business people, technical gaps to technical people. Under the default
-`single` channel, gaps are answered one by one by the person in front of the chat box,
-never touching DingTalk. With
-[intent-gate-service](https://github.com/baixinghao/intent-gate-service)
-(a standalone MCP service) installed, funnel level ③ can post to a DingTalk group
-@ the corresponding role; replies land in the inbox via callback and are picked up by
-intent-gate's `collect_answers`.
-
-The real value of the group channel is **the paper trail**: answers in the group carry
-a staffId, carry the original wording, and are publicly visible — whoever made the call
-is on record, and **no objection in the group ≈ consensus**. DingTalk is only the
-transport layer; the file ledger does not depend on it to survive.
-
-Blocking emergency human escalation during coding (the `ask_human` decision gate)
-lives in intent-gate-service too — **all heavy interaction that blocks waiting for a
-human reply is in the sister project**; the main plugin is always non-blocking.
-
-Split out since v0.2.0 — the main plugin keeps only intent alignment and requirement
-analysis, with zero DingTalk dependencies.
+- **Red-blue adversarial review** (`red-blue-review` skill): after a complex
+  requirement's summary is delivered, optionally open an independent session — the
+  blue team reads only the artifacts, not the red team's reasoning (information diet),
+  runs the R1–R9 checks, and produces findings that drive a gated rectification loop.
+  `approved` comes via exactly two paths — a blue-team PASS or a direct human ruling;
+  the red team never self-grants. Circuit breaker: at most 2 rounds, still FAIL →
+  `ESCALATE` to a human.
+- **DingTalk group consensus channel** (sister project
+  [intent-gate-service](https://github.com/baixinghao/intent-gate-service), a standalone
+  MCP service): business gaps belong to business people, technical gaps to technical
+  people — funnel level ③ can post to a DingTalk group @ the right role; replies land
+  in the inbox via callback. The real value of the group channel is **the paper trail**:
+  answers carry a staffId and the original wording and are publicly visible —
+  **no objection in the group ≈ consensus**. The main plugin defaults to the `single`
+  channel, zero config.
 
 ## Quick start (Claude Code — two steps)
 
@@ -237,29 +254,6 @@ are live.
 > delivery blocking. The SessionStart hook self-checks at every session start:
 > if the server is missing, your agent will tell you to run step 1.
 
-## Using it: what to say
-
-Once installed, you drive it with plain language (Chinese works fine).
-This table is the whole manual:
-
-| You say | Who picks it up | What happens |
-|---|---|---|
-| "分析这个需求 / analyze this PRD"（贴文档或指文件） | 🔴 Red team（`requirement-alignment`） | Reads the playbook first, runs the Step 0 confidence check, then asks you structured questions (≥3 options + "other"), one gap at a time |
-| "画个状态机 / 生成 DDL" | 🔴 Red team | Same entry — pattern routing decides which diagrams your requirement actually needs |
-| "继续"（中断后/新会话） | 🔴 Red team | Resumes from the on-disk ledger (`.harness/requests/{feature}/_review/`) — no session memory needed |
-| 回答它的提问："1"，或 "4 余额不足一律拒绝" | the funnel | Answer logged verbatim → injected into the diagrams → settled with a precise landing point |
-| "红蓝对抗 / blue-team review" —— **另开新会话说** | 🔵 Blue team（`red-blue-review`） | Independent adversarial review of the delivered summary: R1–R9 checks → findings with verdict PASS / FAIL-可整改 / FAIL-重做 |
-| "按 findings 整改"（回到红军的会话里说） | 🔴 Red team revision discipline（§5.5） | Each finding settled into `revision-log.md` with a real landing point, lint re-runs to zero CRITICAL; anything conflicting with your earlier rulings comes back to you for a decision |
-| 什么都不说，直接让它写代码 | SessionStart hook | The agent reads the landed `summary.md` contract before coding; `blocked` or lint-CRITICAL contracts refuse to be coded against |
-
-Two rules worth remembering:
-
-- **Answer its questions seriously** — every answer becomes part of the contract
-  your coding agent will execute against.
-- **The blue team needs a fresh session** — reviewing in the same session degrades
-  adversarial review into self-check. Deliver with the red team, then open a new
-  conversation and say "红蓝对抗".
-
 ## Other MCP clients
 
 Install the server as in step 1, then point your client at the `intent-gate` command:
@@ -278,8 +272,7 @@ If your client speaks a network transport, expose MCP over **SSE** with
 `intent-gate --mcp-transport sse --mcp-port 8400`.
 
 **All intent-alignment capabilities work with zero configuration** (single channel,
-chat dialog as fallback). For the DingTalk group channel, see the
-[intent-gate-service README](https://github.com/baixinghao/intent-gate-service).
+chat dialog as fallback).
 
 ## Development (from a clone)
 
