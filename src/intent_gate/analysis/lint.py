@@ -8,6 +8,8 @@
   L0 状态机块存在但边解析为零（CRITICAL，守门员失明兜底，绝不静默跳过）
   L1 状态机成功终态（CRITICAL）
   L2 死状态（MAJOR）
+  L2b 仅有自环、无对外出边的状态（MAJOR，L2/L3 之间的漏网带：
+      outs={st} 使 L2 失明，real=∅ 使 L3 失明——错题集 2026-08-11 收录）
   L3 同状态多出边（MINOR，提示语义复核）
   L4 映射表锚点：章节号存在 + 关键词匹配标题（CRITICAL）
   L5 规则引用 BR-xx 必须有定义（MAJOR）
@@ -87,6 +89,12 @@ def lint(summary_path: Path):
             outs = out_map.get(st, set())
             if not outs:
                 findings.append(("MAJOR", "L2", f"死状态 {st}：无出边且未流向 [*]"))
+            elif outs == {st}:
+                # L2b（错题集 2026-08-11）：自环让 outs 非空（L2 失明），
+                # real=∅ 又让 L3 失明——永驻态/死循环从两条规则的夹缝漏网
+                findings.append(("MAJOR", "L2b",
+                                 f"状态 {st} 仅有自环、无对外出边（疑似永驻态/死循环），"
+                                 "需人工确认退出路径"))
             real = outs - {st}
             if len(real) > 1:
                 findings.append(("MINOR", "L3", f"状态 {st} 有 {len(real)} 条出边（→{', →'.join(sorted(real))}），需人工确认触发条件可区分"))
