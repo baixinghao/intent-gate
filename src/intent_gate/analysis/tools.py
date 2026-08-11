@@ -79,10 +79,11 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
 
     @mcp.tool()
     def lint_summary(summary_path: str) -> dict:
-        """summary.md 机械自检（L1-L8 + 三矩阵，逻辑冻结）。
+        """summary.md 机械自检（L1-L9 + 三矩阵，逻辑冻结）。
 
         L1 成功终态 / L2 死状态 / L3 多出边 / L4 映射表锚点 / L5 BR 引用 /
-        L6 表读写矩阵 / L7 映射行覆盖 / L8 降级回执 + 三张矩阵骨架。
+        L6 表读写矩阵 / L7 映射行覆盖 / L8 降级回执 / L9 路径隔离
+        + 三张矩阵骨架。
         🔴 CRITICAL 未归零不得交付（playbook Step 4 门禁）。"""
         return run_lint(summary_path)
 

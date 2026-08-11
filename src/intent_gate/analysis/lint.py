@@ -6,19 +6,30 @@
 
 机械检查项：
   L0 状态机块存在但边解析为零（CRITICAL，守门员失明兜底，绝不静默跳过）
-  L1 状态机成功终态（CRITICAL）
+  L1 状态机成功终态（CRITICAL，词表见 L1_SUCCESS_RE——只收完整终态词，
+      裸「完成」「结束」不收：「未完成」含「完成」会造成假通过）
   L2 死状态（MAJOR）
   L2b 仅有自环、无对外出边的状态（MAJOR，L2/L3 之间的漏网带：
       outs={st} 使 L2 失明，real=∅ 使 L3 失明——错题集 2026-08-11 收录）
   L3 同状态多出边（MINOR，提示语义复核）
-  L4 映射表锚点：章节号存在 + 关键词匹配标题（CRITICAL）
+  L4 映射表锚点：章节号存在 + 关键词匹配标题（CRITICAL。
+      错题集 2026-08-12：§3.2/§5.1 连写会被吞并漏检——
+      关键词捕获组必须排除 / § 括号 顿号，多锚点各自独立校验）
   L5 规则引用 BR-xx 必须有定义（MAJOR）
-  L6 表读写矩阵：每张表至少一处写（CRITICAL）/一处读（MINOR）
-  L7 映射表行 vs alignment-log Q 编号覆盖：每个 Q 必须有映射行（MAJOR）
+  L6 表读写矩阵：每张表至少一处写（CRITICAL）/一处读（MINOR。
+      关键词双侧小写比较；建表正则反引号可选、大小写不敏感）
+  L7 映射表行 vs alignment-log Q 编号覆盖：每个 Q 必须有映射行（MAJOR。
+      第一列接受裸数字或 Q 前缀，见 L7_MAP_ROW_RE）
   L8 [🟡待澄清] 降级项必须附人类确认记录（MINOR）
+  L9 路径隔离：DDL 禁止内嵌 summary.md，只落项目根 sql/（CRITICAL。
+      错题集 2026-08-12：SQL 全写进 summary.md 时 L6 输入源 sql/*.sql 为空而
+      静默失明——内嵌 CREATE TABLE 与「登记 sql/ 却无文件」都要抓）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
+
+报告头部附「机械判定契约」（_contract_text() 从常量插值生成，
+禁止手抄第二份——防漂移测试见 ContractDisclosureTests）。
 """
 import re
 from pathlib import Path
@@ -30,8 +41,19 @@ KW_MAP = {
     "状态机": ["状态机", "状态"],
     "数据模型": ["数据模型"],
 }
-WRITE_KW = ("INSERT", "UPDATE", "save", "写入", "落库", "DELETE")
-READ_KW = ("SELECT", "查询", "find", "query", "Query")
+WRITE_KW = ("INSERT", "UPDATE", "save", "写入", "落库", "DELETE", "保存", "新增")
+READ_KW = ("SELECT", "查询", "find", "query", "Query", "读取", "获取")
+
+# ---- 判定契约常量：改动即改判定行为，契约文本自动跟随 ----
+L1_SUCCESS_RE = r"FINISH|SUCCESS|DONE|COMPLETE|成功|已完成|已结束|已完结|已通过"
+SECTION_RE = r"^#{2,3}\s*(\d+(?:\.\d+)?)[\.、\s]+(.+)$"
+L4_ANCHOR_RE = r"§(\d+(?:\.\d+)?)\s*([^\s，。；|/§()（）、]*)"
+DDL_TABLE_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?"
+L7_LOG_Q_RE = r"^## Q(\d+)"
+L7_MAP_ROW_RE = r"\s*\|\s*Q?(\d+)"
+# 建表语句形态（表名+开括号）才算内嵌 DDL；散文提及「CREATE TABLE 语句…」不误伤
+L9_EMBED_DDL_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?\w+`?\s*\("
+L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook §3.4 要求的格式）；\b 锚定防 sqlite/、mysql/ 误报
 
 
 def lint(summary_path: Path):
@@ -80,7 +102,7 @@ def lint(summary_path: Path):
 
     if edges:
         states = {s for s, _, _, _ in edges if s != "[*]"} | {t for _, t, _, _ in edges if t != "[*]"}
-        if not any(re.search(r"FINISH|SUCCESS|DONE|COMPLETE|成功|已完成|已结束", s) for s in states):
+        if not any(re.search(L1_SUCCESS_RE, s) for s in states):
             findings.append(("CRITICAL", "L1", f"状态机无成功终态（现有状态：{', '.join(sorted(states))}）"))
         out_map = {}
         for s, t, _, _ in edges:
@@ -102,7 +124,7 @@ def lint(summary_path: Path):
     # ---- 章节 ----
     sections = {}
     for ln in lines:
-        m = re.match(r"^#{2,3}\s*(\d+(?:\.\d+)?)[\.、\s]+(.+)$", ln)
+        m = re.match(SECTION_RE, ln)
         if m:
             sections[m.group(1)] = m.group(2).strip()
 
@@ -119,7 +141,7 @@ def lint(summary_path: Path):
 
     anchors = []  # (ref, verdict)
     for ln in map_rows:
-        for m in re.finditer(r"§(\d+(?:\.\d+)?)\s*([^\s，。；|]*)", ln):
+        for m in re.finditer(L4_ANCHOR_RE, ln):
             num, kw = m.group(1), m.group(2)
             if num not in sections:
                 verdict = f"❌ §{num} 不存在"
@@ -148,11 +170,14 @@ def lint(summary_path: Path):
         sql_dir = summary_path.parent / "sql"
     table_matrix = []  # (table, writers, readers)
     for sql in sorted(sql_dir.glob("*.sql")) if sql_dir.exists() else []:
-        for tm in re.finditer(r"CREATE TABLE[^`]*`(\w+)`", sql.read_text(encoding="utf-8")):
+        for tm in re.finditer(DDL_TABLE_RE, sql.read_text(encoding="utf-8"), re.I):
             tbl = tm.group(1)
             tbl_lines = [ln.strip() for ln in text.split("\n") if tbl in ln]
-            writers = [ln[:60] for ln in tbl_lines if any(w in ln for w in WRITE_KW)]
-            readers = [ln[:60] for ln in tbl_lines if any(r in ln for r in READ_KW)]
+            # 双侧小写比较：SQL 关键词大小写混写（insert/Insert）不许漏判
+            writers = [ln[:60] for ln in tbl_lines
+                       if any(w.lower() in ln.lower() for w in WRITE_KW)]
+            readers = [ln[:60] for ln in tbl_lines
+                       if any(r.lower() in ln.lower() for r in READ_KW)]
             table_matrix.append((tbl, writers, readers))
             if not writers:
                 findings.append(("CRITICAL", "L6", f"表 {tbl} 全报告无任何写入动作（图/文均无 INSERT/UPDATE/save）"))
@@ -163,10 +188,10 @@ def lint(summary_path: Path):
     log_path = summary_path.parent / "_review" / "alignment-log.md"
     if log_path.exists():
         log_text = log_path.read_text(encoding="utf-8")
-        q_nums = set(re.findall(r"^## Q(\d+)", log_text, re.M))
+        q_nums = set(re.findall(L7_LOG_Q_RE, log_text, re.M))
         map_nums = set()
         for ln in map_rows:
-            m = re.match(r"\s*\|\s*(\d+)", ln)
+            m = re.match(L7_MAP_ROW_RE, ln)
             if m:
                 map_nums.add(m.group(1))
         for q in sorted(q_nums - map_nums, key=int):
@@ -179,7 +204,51 @@ def lint(summary_path: Path):
         if "确认" not in seg and "同意降级" not in seg:
             findings.append(("MINOR", "L8", "存在 [🟡待澄清] 降级项，但附近未发现人类确认记录字样"))
 
+    # ---- L9 路径隔离：DDL 只落项目根 sql/，禁止内嵌 summary.md ----
+    # 错题集 2026-08-12：SQL 全写进 summary.md 时 L6 的输入源（sql/*.sql）为空 →
+    # L6 静默失明。机械半边补在这里：内嵌 CREATE TABLE 与「登记了 sql/ 路径但
+    # 目录无 SQL 文件」都报 CRITICAL（sql_dir 复用 L6 的定位结果）。
+    if re.search(L9_EMBED_DDL_RE, text, re.I):
+        findings.append(("CRITICAL", "L9",
+                         "summary.md 内嵌 CREATE TABLE——DDL 禁止内嵌报告，"
+                         "迁至项目根 sql/{表名}.sql（playbook §3.4/Step 4 路径隔离）"))
+    if re.search(L9_SQL_REF_RE, text) and (not sql_dir.exists()
+                                           or not list(sql_dir.glob("*.sql"))):
+        findings.append(("CRITICAL", "L9",
+                         "报告登记了 SQL 相对路径（sql/）但 sql/ 目录无 SQL 文件——"
+                         "DDL 未按 playbook §2/§3.4 落到项目根 sql/（定位目录："
+                         f"{sql_dir}）"))
+
     return findings, edges, table_matrix, anchors, sections
+
+
+def _contract_text() -> list[str]:
+    """机械判定契约——全部从常量插值生成，禁止手抄第二份。
+
+    披露即契约：红军/蓝军照此写作即可一次过检，无需试错反推。
+    """
+    return [
+        "## 机械判定契约（从 lint.py 常量插值生成，随逻辑自动更新）", "",
+        f"- **L1 成功终态词表**：`{L1_SUCCESS_RE}`（状态名命中其一即算成功终态；"
+        "裸「完成」「结束」刻意不收。业务终态用 mermaid 描述语法复合命名："
+        "`已完结 : 放款成功` 或 `state \"已完结（放款成功）\" as 已完结`——"
+        "🔴 禁止把带括号的复合名直接当状态 ID 写进边（如 `已完结（放款成功） --> [*]`），"
+        "括号不在状态标识符字符集内，该边会被静默吃掉，触发 L2/L0 误报）",
+        f"- **章节标题识别**：`{SECTION_RE}`（##/### 开头 + 数字编号）",
+        f"- **L4 锚点解析**：`{L4_ANCHOR_RE}`（多落点连写请用 / 等分隔，"
+        "各锚点独立校验；关键词命中下列词时校验标题匹配）",
+        f"  - 关键词→标题应含：{'; '.join(f'{k}→{v}' for k, v in KW_MAP.items())}",
+        f"- **L6 写入词表**：`{WRITE_KW}`；**读取词表**：`{READ_KW}`"
+        "（双侧小写比较，大小写混写不影响判定）",
+        f"- **L6 建表识别**：``{DDL_TABLE_RE}``（大小写不敏感，反引号可选）",
+        "- **L6 SQL 目录定位**：summary 上溯四级找 sql/，不存在则退化为 summary 同级 sql/",
+        f"- **L7 alignment-log 题号**：`{L7_LOG_Q_RE}`（## Q 开头的二级标题）",
+        f"- **L7 映射表行识别**：`{L7_MAP_ROW_RE}`（表格首列为裸数字或 Q+数字）",
+        f"- **L9 DDL 内嵌识别**：``{L9_EMBED_DDL_RE}``（建表语句形态才算内嵌——"
+        "散文提及 CREATE TABLE 字样不误伤；DDL 只落项目根 sql/，禁止内嵌报告）",
+        f"- **L9 SQL 登记检查**：出现 `{L9_SQL_REF_RE}`（相对路径登记）时，sql/ 目录必须"
+        "存在且含 .sql 文件，否则 CRITICAL（目录定位同 L6）",
+        "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
 def run_lint(summary_path: str | Path) -> dict:
@@ -192,8 +261,9 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L8 + 三矩阵，逻辑冻结）", "",
-           "## Findings", ""]
+           "> 生成：intent-gate lint_summary（L1-L9 + 三矩阵，逻辑冻结）", ""]
+    rep += _contract_text()
+    rep += ["## Findings", ""]
     for lv, rule, detail in findings:
         rep.append(f"- **[{lv}][{rule}]** {detail}")
     if not findings:

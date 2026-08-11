@@ -1,6 +1,6 @@
 """analyze_request 引擎实现（纯 stdlib，无第三方依赖，可独立单测）。
 
-型态判定标准（与 doc-analysis skill Step 1 一致）：
+型态判定标准（与 doc_analysis_playbook Step 1 一致）：
   State-Driven   核心实体存在生命周期跳转；状态信号 ≥4 触发
   Process-Driven 多接口串联/跨服务调用；跨系统信号 ≥3 触发
   Rule-Driven    密集业务判断分支；条件分支信号 ≥3 触发

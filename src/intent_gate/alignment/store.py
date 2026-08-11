@@ -4,7 +4,7 @@
 
     pending-questions.md   待决问题清单（checkbox 对账表，发题前先落盘）
     alignment-log.md       意图对齐流水（🔴 蓝军 R1「注入保真」复核的唯一依据，
-                           格式与 doc-analysis skill 的既有约定一字不差）
+                           格式与 MCP prompt doc_analysis_playbook 的既有约定一字不差）
     inference-pending.md   AI 推断待确认清单（批量点头用）
     inbox/                 群回复落盘区（钉钉回调写进来的答案原话）
         _consumed/         已被 collect_answers 领取的答案（归档，防重复领取）
