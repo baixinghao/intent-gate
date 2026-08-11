@@ -19,6 +19,7 @@ venv/
 # Local agent config (per-machine, not for distribution)
 .claude/
 .kimi/
+.reasonix/
 
 # Reference copies of third-party projects (not ours, never publish)
 _ref/
