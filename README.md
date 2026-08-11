@@ -118,6 +118,24 @@ button instead of designing a server-side distributed lock, hardcode a success p
 instead of routing by `queryCurrentStep`, and never model the `EXPIRED` state at all.
 The guessing space is structurally compressed, not politely discouraged.
 
+## Where to put your PRD
+
+intent-gate accepts **UTF-8 text files** or **.docx** (the dominant format for business requirements). Three ways to hand one over:
+
+| Way | Example | Notes |
+|---|---|---|
+| Absolute path | `analyze D:\docs\withdraw-confirm.docx` | Most reliable; readable from anywhere |
+| Relative path | `analyze docs/withdraw-confirm.md` | Resolved against the project root (`HG_WORKSPACE_ROOT`, defaults to the startup directory) |
+| Conversation attachment | Drag the file into the chat; have the agent persist it first | Attachments are conversation content to the host, not a path — the agent must write them to disk before handing over a path |
+
+**Supported formats:**
+
+- ✅ UTF-8 text: `.md` / `.txt` / `.csv` / `.json` and similar
+- ✅ `.docx`: **native support** — mammoth is a core dependency (installed automatically; tables become Markdown tables); if markitdown already exists in your environment (e.g. for another document MCP), it is reused for enhanced extraction
+- ❌ Legacy `.doc` / `.pdf` / `.xlsx` and other binaries: convert first — Word「Save As → .docx or Plain Text (.txt)」, PDF export/save-as text
+
+**Errors carry the next step**: missing file, binary format, and encoding failures each return a distinct message telling you what to do.
+
 ## Using it: what to say
 
 Once installed, you drive it with plain language. This table is the whole manual:
@@ -233,10 +251,31 @@ reference source.
   **no objection in the group ≈ consensus**. The main plugin defaults to the `single`
   channel, zero config.
 
+## Environment requirements
+
+| Item | Requirement | Notes |
+|---|---|---|
+| Python | ≥ 3.11 | [python.org](https://www.python.org/downloads/); pipx/uv manage an isolated environment |
+| Package manager | `pipx` or `uv` | [Install pipx](https://pipx.pypa.io/stable/installation/) / [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| OS | Windows / macOS / Linux | On Windows, the plugin's SessionStart injection needs [Git Bash](https://gitforwindows.org/) (skipped silently when missing; everything else keeps working) |
+| MCP client | Any MCP-capable client | Claude Code / Cursor / VS Code etc.; the skills/hooks plugin form is currently Claude Code-specific |
+
+**Dependencies** (installed automatically — nothing manual):
+
+| Package | Purpose |
+|---|---|
+| `mcp>=1.10,<2.0` | MCP protocol (FastMCP 1.x) |
+| `pydantic>=2.6` / `pydantic-settings>=2.2` | Configuration & validation |
+| `mammoth>=1.11` | .docx parsing engine (only dependency is cobble, pure Python, no onnxruntime) |
+
+Optional enhancement: if `markitdown` is already in your environment (e.g. installed for another document MCP), it is reused automatically for finer table/merged-cell extraction; otherwise mammoth handles it.
+
 ## Quick start (Claude Code — two steps)
 
 ```bash
 # 1) Install the MCP server — the enforcement half (tools, ledger, lint gates)
+#    .docx is natively supported: mammoth is a core dependency, installed
+#    automatically with the package — no extra required
 pipx install git+https://github.com/baixinghao/intent-gate.git
 # or: uv tool install git+https://github.com/baixinghao/intent-gate.git
 
@@ -253,6 +292,16 @@ are live.
 > with good advice and zero mechanical gates — no question ledger, no lint, no
 > delivery blocking. The SessionStart hook self-checks at every session start:
 > if the server is missing, your agent will tell you to run step 1.
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HG_WORKSPACE_ROOT` | `.` (startup directory) | Project root (where `.harness` lives); relative PRD paths resolve against it |
+| `HG_LOG_LEVEL` | `INFO` | Log level (DEBUG / INFO / WARNING / ERROR) |
+| `HG_CHANNEL` | `single` | Intent-alignment channel; only `single` (dialog fallback) is supported — the DingTalk group channel lives in the sister project intent-gate-service |
+
+Every variable has a default — **zero config to use**; copy `.env.example` to `.env` only when you want to adjust.
 
 ## Other MCP clients
 
@@ -273,6 +322,12 @@ If your client speaks a network transport, expose MCP over **SSE** with
 
 **All intent-alignment capabilities work with zero configuration** (single channel,
 chat dialog as fallback).
+
+## Notes
+
+- **Document-parsing boundary**: .docx only; `.doc` legacy / `.pdf` / `.xlsx` and other binaries must be converted first (Word「Save As → .docx or Plain Text (.txt)」, PDF export/save-as text)
+- The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is currently Claude Code-specific** — other clients get the server half only
+- The ledger lives under `{workspace_root}/.harness/requests/` and is tracked by git — add a `.gitignore` entry if you don't want it committed
 
 ## Development (from a clone)
 

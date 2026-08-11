@@ -20,6 +20,10 @@ dependencies = [
     "mcp>=1.10.0,<2.0",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    # docx 支持（主力战场：需求文档多为 Word）。mammoth 纯 Python 轻量
+    # （唯一依赖 cobble，无 onnxruntime），硬依赖——pipx/pip 安装时自动带上；
+    # 用户环境已有 markitdown 时自动复用增强（表格/合并单元格），无则走 mammoth。
+    "mammoth>=1.11.0,<2.0",
 ]
 
 [project.optional-dependencies]

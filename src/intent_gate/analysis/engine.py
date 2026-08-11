@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .docx import extract_text
+
 # ------------------------------------------------------------ 信号词表
 # 状态信号：常见中文状态词 + 英文大写下划线枚举（如 WITHDRAW_CONFIRM）
 _STATE_CN = [
@@ -338,10 +340,35 @@ def _fresh(
             "reason": f"需求 {feature} 无既有现场，从0解析必须提供 prd_path",
         }
     prd = Path(prd_path)
+    if not prd.is_absolute():
+        # 相对路径统一按 workspace_root 解析（与账本落盘同基准，避免 cwd 错位）
+        prd = Path(workspace_root) / prd
     if not prd.exists():
-        return {"mode": "fresh", "ok": False, "reason": f"PRD 文件不存在: {prd_path}"}
+        return {"mode": "fresh", "ok": False,
+                "reason": f"PRD 文件不存在: {prd}（相对路径按 workspace_root 解析；"
+                          "对话附件请先由宿主落盘为文件再传路径）"}
 
-    text = prd.read_text("utf-8")
+    raw = prd.read_bytes()
+    if b"\x00" in raw[:4096]:
+        # 二进制：只认 .docx（引擎自动降级 markitdown → mammoth → stdlib）
+        if prd.suffix.lower() == ".docx":
+            try:
+                text = extract_text(prd)
+            except ValueError as exc:
+                return {"mode": "fresh", "ok": False, "reason": str(exc)}
+        else:
+            ext = prd.suffix.lstrip(".") or "未知"
+            return {"mode": "fresh", "ok": False,
+                    "reason": f"{prd.name} 是二进制格式（.{ext}），intent-gate 只接受 "
+                              "UTF-8 文本与 .docx。请转为文本后重试：Word「另存为 → "
+                              ".docx 或 纯文本(.txt)」，PDF 请导出/另存为文本。"}
+    else:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"mode": "fresh", "ok": False,
+                    "reason": f"{prd.name} 不是 UTF-8 编码（疑似 GBK 等），"
+                              "请转存为 UTF-8 后重试。"}
     pattern = _judge_pattern(text)
     gaps = _scan_gaps(text)
     confidence = _confidence(gaps)

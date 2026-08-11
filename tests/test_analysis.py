@@ -193,5 +193,87 @@ class EngineHardeningTests(AnalysisTestBase):
         self.assertTrue(ok["ok"])
 
 
+class DocxInputTests(AnalysisTestBase):
+    """输入契约加固：.docx 支持、相对路径解析、二进制/编码拒绝（全部带指引）。"""
+
+    def _make_docx(self, paragraphs: list[str]) -> Path:
+        """构造最小合法 .docx（zip 内放 word/document.xml）。"""
+        from zipfile import ZipFile, ZIP_DEFLATED
+        import xml.etree.ElementTree as ET
+
+        w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        body = ET.Element(f"{{{w}}}document")
+        b = ET.SubElement(body, f"{{{w}}}body")
+        for para in paragraphs:
+            p = ET.SubElement(b, f"{{{w}}}p")
+            t = ET.SubElement(p, f"{{{w}}}t")
+            t.text = para
+        p = self.root / "prd.docx"
+        with ZipFile(p, "w", ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "word/document.xml",
+                ET.tostring(body, encoding="utf-8", xml_declaration=True),
+            )
+        return p
+
+    def test_docx_analyzed(self):
+        """docx 提取文本后正常走初筛（引擎自动选 markitdown/mammoth/stdlib）。"""
+        p = self._make_docx(["提交按钮需要防重复点击，前端置灰即可。", "看情况跳转。"])
+        result = analyze_request(self.root, "docx-feat", str(p))
+        self.assertTrue(result["ok"])
+        gap_texts = " ".join(g["gap"] for g in result["gaps"])
+        self.assertIn("防重", gap_texts)
+        self.assertIn("看情况", gap_texts)
+
+    def test_relative_path_resolved_against_workspace_root(self):
+        """相对路径按 workspace_root 解析（与 cwd 无关）。"""
+        self.prd.write_text(RED_PRD, encoding="utf-8")
+        result = analyze_request(self.root, "rel-feat", "prd.md")
+        self.assertTrue(result["ok"])
+
+    def test_binary_non_docx_rejected_with_guidance(self):
+        """PDF 等二进制拒绝，报错带格式边界与转文本指引。"""
+        p = self.root / "prd.pdf"
+        p.write_bytes(b"%PDF-1.4\x00\x00fake")
+        result = analyze_request(self.root, "pdf-feat", str(p))
+        self.assertFalse(result["ok"])
+        self.assertIn("二进制", result["reason"])
+        self.assertIn(".docx", result["reason"])
+
+    def test_non_utf8_rejected_with_guidance(self):
+        """GBK 等非 UTF-8 文本拒绝，报错带转存指引。"""
+        p = self.root / "prd-gbk.txt"
+        p.write_bytes("中文需求".encode("gbk"))
+        result = analyze_request(self.root, "gbk-feat", str(p))
+        self.assertFalse(result["ok"])
+        self.assertIn("UTF-8", result["reason"])
+
+    def test_docx_engine_detect_and_broken_rejected(self):
+        """引擎探测链存在（markitdown|mammoth，无 stdlib 兜底）；损坏 docx 拒绝带指引。"""
+        from intent_gate.analysis.docx import _detect_engine
+
+        self.assertIn(_detect_engine(), ("markitdown", "mammoth"))
+        p = self.root / "broken.docx"
+        # zip 魔数 + NUL：真实损坏 docx 是二进制（触发嗅探），但解不开
+        p.write_bytes(b"PK\x03\x04\x00\x00\x00not a real docx")
+        result = analyze_request(self.root, "broken-feat", str(p))
+        self.assertFalse(result["ok"])
+        self.assertIn("docx", result["reason"])
+
+    def test_engine_missing_rejects_with_repair_instruction(self):
+        """引擎缺失（环境损坏）→ 拒绝 + 修复指令，不做静默降级。"""
+        from unittest import mock
+
+        from intent_gate.analysis.docx import extract_text
+
+        with mock.patch(
+            "intent_gate.analysis.docx._detect_engine",
+            side_effect=RuntimeError("no engine"),
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                extract_text(self.root / "x.docx")
+        self.assertIn("mammoth", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

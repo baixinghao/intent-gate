@@ -111,6 +111,24 @@ CRITICAL 未归零，契约不许交付、编码不许开工——**这是代码
 | 失败流 | 只有成功路径，"失败？不会发生" | `SUBMITTING` 三条出边：可重试回确认页 / `TERMINATE` 终止 / 成功进 `STEP_QUERY` |
 | 过期 | 没想到 | `EXPIRED` 状态 + 5 分钟双保险 + `SIGN_EXPIRED` 错误码（BR-07） |
 
+## 把 PRD 放在哪里
+
+intent-gate 的输入是 **UTF-8 文本文件** 或 **.docx**（Word 需求文档的主力格式）。三种给法：
+
+| 给法 | 示例 | 说明 |
+|---|---|---|
+| 绝对路径 | `分析需求 D:\docs\提现确认.docx` | 最稳，任何位置都能读 |
+| 相对路径 | `分析需求 docs/提现确认.md` | 相对项目根（`HG_WORKSPACE_ROOT`，默认启动目录）解析 |
+| 对话附件 | 把文档拖进对话，让 agent 先落盘再分析 | 附件在宿主手里是内容不是路径，agent 落盘后才能传 |
+
+**支持格式**：
+
+- ✅ UTF-8 文本：`.md` / `.txt` / `.csv` / `.json` 等
+- ✅ `.docx`：**原生支持**——mammoth 是核心依赖（安装自动带上，表格转 Markdown 表格）；若环境已有 markitdown（如配合其他文档 MCP），自动复用增强
+- ❌ `.doc` 老格式 / `.pdf` / `.xlsx` 等二进制：请先转文本——Word「另存为 → .docx 或 纯文本(.txt)」，PDF 导出/另存为文本
+
+**报错即指引**：文件不存在 / 二进制 / 编码错误分别返回带下一步的报错，照做即可。
+
 ## 怎么用：张嘴说什么
 
 装完之后全靠大白话驱动。这张表就是全部说明书：
@@ -198,10 +216,30 @@ lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性
   回复经回调落盘 inbox 领取。群通道的价值是**留痕**：回答带 staffId、带原话、
   公开可见，**群里无人反驳 ≈ 共识**。主插件默认 single 通道，零配置即用。
 
+## 环境要求
+
+| 项 | 要求 | 说明 |
+|---|---|---|
+| Python | ≥ 3.11 | [python.org](https://www.python.org/downloads/)；pipx/uv 会管理独立环境 |
+| 包管理器 | `pipx` 或 `uv` 任一 | [pipx 安装](https://pipx.pypa.io/stable/installation/) / [uv 安装](https://docs.astral.sh/uv/getting-started/installation/) |
+| 操作系统 | Windows / macOS / Linux | Windows 的插件 SessionStart 注入需 [Git Bash](https://gitforwindows.org/)（缺省时静默跳过，其余功能不受影响） |
+| MCP 客户端 | 支持 MCP 的任一客户端 | Claude Code / Cursor / VS Code 等；skills/hooks 插件形态目前为 Claude Code 定制 |
+
+**依赖包**（安装时自动带上，无需手动安装）：
+
+| 包 | 用途 |
+|---|---|
+| `mcp>=1.10,<2.0` | MCP 协议（FastMCP 1.x） |
+| `pydantic>=2.6` / `pydantic-settings>=2.2` | 配置与校验 |
+| `mammoth>=1.11` | .docx 解析引擎（唯一依赖 cobble，纯 Python，无 onnxruntime） |
+
+可选增强：环境里已有 `markitdown`（如配合其他文档 MCP 安装的）→ 自动复用，docx 表格/合并单元格提取更精细；无则走 mammoth。
+
 ## 快速开始（Claude Code —— 两步）
 
 ```bash
 # 1）装 MCP server —— 执法的那一半（工具/账本/lint 门禁）
+#    .docx 原生支持：mammoth 是核心依赖，安装时自动带上，无需任何 extra
 pipx install git+https://github.com/baixinghao/intent-gate.git
 # 或：uv tool install git+https://github.com/baixinghao/intent-gate.git
 
@@ -216,6 +254,16 @@ claude plugin install intent-gate@baixinghao-plugins
 > （PATH 里没有 `intent-gate` 命令）= 只剩嘴上劝告，机械门禁全部阵亡——
 > 没有问题账本、没有 lint、没有交付拦截。SessionStart hook 每局自检：
 > 发现 server 缺席，agent 会主动提醒你去跑第 1 步。
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `HG_WORKSPACE_ROOT` | `.`（启动目录） | 项目根目录（`.harness` 所在）；PRD 相对路径按它解析 |
+| `HG_LOG_LEVEL` | `INFO` | 日志级别（DEBUG / INFO / WARNING / ERROR） |
+| `HG_CHANNEL` | `single` | 意图对齐通道；仅支持 `single`（对话框兜底），钉钉群通道在姊妹篇 intent-gate-service |
+
+全部变量都有默认值，**零配置即可使用**；需要调整时复制 `.env.example` 为 `.env`。
 
 ## 其他 MCP client
 
@@ -235,6 +283,12 @@ claude plugin install intent-gate@baixinghao-plugins
 以 **SSE** 暴露 MCP。
 
 **零配置即可使用全部意图对齐能力**（single 通道，对话框兜底）。
+
+## 备注
+
+- **文档解析边界**：只支持 .docx；`.doc` 老格式 / `.pdf` / `.xlsx` 等二进制请先转文本（Word「另存为 → .docx 或 纯文本(.txt)」，PDF 导出/另存为文本）
+- MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制**——其他客户端只有 server 一半
+- 账本写在 `{workspace_root}/.harness/requests/` 下，会被 git 跟踪——介意入库请加 `.gitignore`
 
 ## 开发（克隆仓库）
 

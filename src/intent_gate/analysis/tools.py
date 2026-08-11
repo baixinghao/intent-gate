@@ -42,6 +42,11 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
     def analyze_requirement(feature: str, prd_path: str | None = None) -> dict:
         """需求解析现场勘查（两条路自动区分）+ 机械初筛绊线。
 
+        输入契约：prd_path 指 UTF-8 文本文件或 .docx（相对路径按 workspace_root
+        解析）。.docx 引擎：markitdown（环境已有则复用增强）→ mammoth（核心依赖，
+        安装时自动带上）；无 mammoth 拒绝并带修复指令，无静默降级。
+        .doc/.pdf 等其他二进制不支持，报错带转文本指引。
+
         - 从0解析（fresh）：无现场时触发，必须给 prd_path。返回机械初筛信号
           （型态/复杂度/置信度信号/歧义点候选）。🔴 初筛只是交叉校验的绊线，
           正式判断由你按 playbook 语义分析后调 record_analysis 落账。
