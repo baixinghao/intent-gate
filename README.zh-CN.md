@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python >=3.11](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/protocol-MCP-green)](https://modelcontextprotocol.io/)
+[![PyPI](https://img.shields.io/pypi/v/intent-gate-mcp)](https://pypi.org/project/intent-gate-mcp/)
 
 **别让编码 agent 猜需求。**
 
@@ -240,8 +241,8 @@ lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性
 ```bash
 # 1）装 MCP server —— 执法的那一半（工具/账本/lint 门禁）
 #    .docx 原生支持：mammoth 是核心依赖，安装时自动带上，无需任何 extra
-pipx install git+https://github.com/baixinghao/intent-gate.git
-# 或：uv tool install git+https://github.com/baixinghao/intent-gate.git
+pipx install intent-gate-mcp
+# 或：uv tool install intent-gate-mcp
 
 # 2）装插件 —— skills + hooks，自动注册 MCP server
 claude plugin marketplace add baixinghao/intent-gate

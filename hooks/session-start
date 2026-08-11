@@ -29,7 +29,7 @@ using_intent_gate_escaped=$(escape_for_json "$using_intent_gate_content")
 # say so loudly in the injected context and tell the human how to fix it.
 mcp_warning=""
 if ! command -v intent-gate >/dev/null 2>&1; then
-  mcp_warning="⚠️ INTENT-GATE MCP SERVER NOT RUNNING: command 'intent-gate' not found on PATH. Discipline skills are injected, but ALL mechanical gates are unavailable (no question persistence, no lint enforcement). Tell the human to run: pipx install git+https://github.com/baixinghao/intent-gate.git — then restart the session.\\n\\n"
+  mcp_warning="⚠️ INTENT-GATE MCP SERVER NOT RUNNING: command 'intent-gate' not found on PATH. Discipline skills are injected, but ALL mechanical gates are unavailable (no question persistence, no lint enforcement). Tell the human to run: pipx install intent-gate-mcp — then restart the session.\\n\\n"
 fi
 
 session_context="<EXTREMELY_IMPORTANT>\nYou have a human escalation gate (intent-gate MCP).\n\n${mcp_warning}**Below is the full content of your 'intent-gate:using-intent-gate' skill - your introduction to when and how to escalate decisions to humans. Read it before acting on anything it covers:**\n\n${using_intent_gate_escaped}\n</EXTREMELY_IMPORTANT>"

@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python >=3.11](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/protocol-MCP-green)](https://modelcontextprotocol.io/)
+[![PyPI](https://img.shields.io/pypi/v/intent-gate-mcp)](https://pypi.org/project/intent-gate-mcp/)
 
 **Stop AI coding agents from guessing.**
 
@@ -276,8 +277,8 @@ Optional enhancement: if `markitdown` is already in your environment (e.g. insta
 # 1) Install the MCP server — the enforcement half (tools, ledger, lint gates)
 #    .docx is natively supported: mammoth is a core dependency, installed
 #    automatically with the package — no extra required
-pipx install git+https://github.com/baixinghao/intent-gate.git
-# or: uv tool install git+https://github.com/baixinghao/intent-gate.git
+pipx install intent-gate-mcp
+# or: uv tool install intent-gate-mcp
 
 # 2) Install the plugin — skills + hooks, auto-registers the MCP server
 claude plugin marketplace add baixinghao/intent-gate

@@ -44,7 +44,7 @@ def _detect_engine() -> str:
         except ImportError:
             raise RuntimeError(
                 "docx 引擎缺失：mammoth 未安装。请重新安装 intent-gate"
-                "（pipx install intent-gate，mammoth 为核心依赖自动带上），"
+                "（pipx install intent-gate-mcp，mammoth 为核心依赖自动带上），"
                 "或手动 pip install mammoth。"
             ) from None
     return _ENGINE
@@ -79,7 +79,7 @@ def _extract_mammoth(path: Path) -> str:
     except ImportError:
         raise ValueError(
             "docx 引擎缺失：mammoth 未安装。请重新安装 intent-gate"
-            "（pipx install intent-gate，mammoth 为核心依赖自动带上），"
+            "（pipx install intent-gate-mcp，mammoth 为核心依赖自动带上），"
             "或手动 pip install mammoth。"
         ) from None
     try:
@@ -107,7 +107,7 @@ def extract_text(path: Path) -> str:
     except RuntimeError:
         raise ValueError(
             "docx 引擎缺失：mammoth 未安装。请重新安装 intent-gate"
-            "（pipx install intent-gate，mammoth 为核心依赖自动带上），"
+            "（pipx install intent-gate-mcp，mammoth 为核心依赖自动带上），"
             "或手动 pip install mammoth。"
         ) from None
     if engine == "markitdown":
