@@ -1,6 +1,6 @@
 ---
 name: requirement-alignment
-description: Use when analyzing a requirement/PRD (分析需求/解析需求/解析PRD/分析PRD), building state machines (画状态机), sequence diagrams (时序图), decision tables (决策表) or DDL from a spec, or resuming an interrupted requirement analysis (用户说"继续") - drives the three-level intent-alignment funnel (code evidence, registered inference, structured escalation) through the intent-gate MCP tools
+description: Use when analyzing a requirement/PRD (分析需求/解析需求/解析PRD/分析PRD), building state machines (画状态机), sequence diagrams (时序图), decision tables (决策表) or DDL from a spec, or resuming an interrupted requirement analysis (用户说"继续") - drives the three-level intent-alignment funnel (code evidence, registered inference, structured escalation) through the intent-gate MCP tools. NOT for writing implementation code (实现需求/编码/写代码): coding against a landed contract belongs to the contract-coding skill; a contract rejected by the coding gate (status/lint) goes back to the HUMAN for a ruling, never auto-resumes alignment
 ---
 
 # Requirement Intent Alignment
@@ -14,6 +14,16 @@ mechanical lint.
 
 **The full law is the MCP prompt `doc_analysis_playbook` — read it in full before
 starting Step 0. This skill is the map; the playbook is the territory.**
+
+**Dual-layer detection — the diagram is the instrument, not a deliverable.**
+Layer 1 (reading): sweep the PRD text for explicit ambiguities (the nine-category
+checklist). Layer 2 (drawing): do NOT wait for answers before drawing — hard-draw
+draft diagrams in the FIRST turn; every node/edge you cannot draw becomes a `TBDn`
+placeholder (`state "???待确认" as TBDn` / `--> TBDn`; never bare `--> ???`, lint's
+state-id charset eats it). Each placeholder is a gap: 🔧 technical → code evidence
+first, 📋 business → dispatch_question. Placeholders are cleared ONLY by code
+evidence or a human ruling — never by guessing. The first resolve_question is
+mechanically gated on the draft existing (analysis-draft.md with a mermaid block).
 
 ## The Funnel
 

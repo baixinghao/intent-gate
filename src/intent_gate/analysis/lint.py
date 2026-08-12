@@ -31,6 +31,9 @@
       状态机每条边 label 必须含 (技术动作)（CRITICAL。错题集 2026-08-12）
   L12 映射表锚点纯散文：数据行无一行含 §/BR- 锚点（MAJOR——
       L4 对散文锚点无从校验，锚点必须可机检）
+  L13 图内占位符残留 ???/TBDn（CRITICAL。占位只允许被代码实证或人类拍板消除，
+      禁止猜测填空；先于边解析全文扫描 mermaid 块——裸 ??? 边字符集不收会被静默吃掉）
+  L13b 草稿图占位仍在但待决清单无在飞题（MINOR，单方向防漏发题）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -66,6 +69,10 @@ L10_EXEMPT_RE = r"无新增表|无表变更|无需建表|复用旧表|复用现�
 # 建表语句形态（表名+开括号）才算内嵌 DDL；散文提及「CREATE TABLE 语句…」不误伤
 L9_EMBED_DDL_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?\w+`?\s*\("
 L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook §3.4 要求的格式）；\b 锚定防 sqlite/、mysql/ 误报
+# L13 占位符（双层意图对齐·绘图层探测器）：画图卡壳处的标准占位形态是
+#   state "???待确认" as TBDn（节点）/ --> TBDn（边）——TBDn 命中 [\w一-鿿]+ 字符集，
+#   边解析零噪音；裸 ??? 仅作兼容扫描（字符集不含 ?，裸 ??? 边会被静默吃掉）。
+PLACEHOLDER_RE = r"\?\?\?|TBD\d+"
 
 
 def lint(summary_path: Path):
@@ -83,6 +90,17 @@ def lint(summary_path: Path):
             in_block = False
         elif in_block:
             cur.append(ln)
+
+    # ---- L13 占位符残留（绘图层探测器，先于边解析执行）----
+    # 🔴 必须先于边解析——占位符可能让边解析静默失明（裸 ??? 不在状态标识符
+    # 字符集内，边被吃掉），必须最先报；只扫 mermaid 块，散文中引用 PRD 原文
+    # 如「§8 TBD」不算占位，不可误伤。
+    for b in blocks:
+        hits = sorted(set(re.findall(PLACEHOLDER_RE, b)))
+        if hits:
+            findings.append(("CRITICAL", "L13",
+                             f"图内残留占位符 {', '.join(hits)}——占位只允许被代码实证或"
+                             "人类拍板消除，禁止猜测填空后交付（playbook Step 0.5 绘图层纪律）"))
 
     # ---- 状态机边 ----
     # 状态标识符：mermaid stateDiagram-v2 允许 CJK 裸标识符（中文 PRD 常态），
@@ -254,6 +272,23 @@ def lint(summary_path: Path):
         if "确认" not in seg and "同意降级" not in seg:
             findings.append(("MINOR", "L8", "存在 [🟡待澄清] 降级项，但附近未发现人类确认记录字样"))
 
+    # ---- L13b 草稿占位无在飞题（MINOR，单方向）----
+    # 防"有断层却没发题"：草稿图内仍有占位但待决清单无在飞题，疑似猜测填空或
+    # 漏发题。只扫草稿的 mermaid 块——draft 断层清单的散文引用（如
+    # 「✏️绘图层：TBD2」）不算占位，不可误伤。
+    draft_path = summary_path.parent / "_review" / "analysis-draft.md"
+    if draft_path.exists():
+        dtext = draft_path.read_text(encoding="utf-8")
+        dblocks = re.findall(r"```mermaid(.*?)```", dtext, re.S)
+        if any(re.search(PLACEHOLDER_RE, b) for b in dblocks):
+            pending_path = summary_path.parent / "_review" / "pending-questions.md"
+            unchecked = ([ln for ln in pending_path.read_text(encoding="utf-8").split("\n")
+                          if ln.strip().startswith("- [ ]")] if pending_path.exists() else [])
+            if not unchecked:
+                findings.append(("MINOR", "L13b",
+                                 "analysis-draft 的图内仍有占位符，但待决清单无在飞题——"
+                                 "疑似猜测填空或漏发题；若占位已消除请同步更新草稿"))
+
     # ---- L9 路径隔离：DDL 只落项目根 sql/，禁止内嵌 summary.md ----
     # 错题集 2026-08-12：SQL 全写进 summary.md 时 L6 的输入源（sql/*.sql）为空 →
     # L6 静默失明。机械半边补在这里：内嵌 CREATE TABLE 与「登记了 sql/ 路径但
@@ -305,6 +340,11 @@ def _contract_text() -> list[str]:
         "状态机每条边 label 必须含 (技术动作)，裸边 CRITICAL；simple/medium 不启用",
         f"- **L12 锚点纯散文**：映射表数据行无一行含 `{L12_ANCHOR_RE}` 锚点 → MAJOR"
         "（落点必须可机检，散文锚点 L4 无从校验）",
+        f"- **L13 占位符识别**：mermaid 块内 `{PLACEHOLDER_RE}`（标准形态 "
+        "`state \"???待确认\" as TBDn` / `--> TBDn`；残留即 CRITICAL——"
+        "占位只允许被代码实证或人类拍板消除，禁止猜测填空）",
+        "- **L13b 草稿占位无在飞题**：草稿图内有占位但待决清单无 `- [ ]` 题 → MINOR"
+        "（单方向，防\"有断层却没发题\"；散文中的 TBD 引用不算占位）",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -318,7 +358,7 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L12 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L13 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:

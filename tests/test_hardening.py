@@ -46,6 +46,14 @@ class AlignmentHardeningTests(unittest.TestCase):
     def review(self, feature="f"):
         return self.root / ".harness" / "requests" / feature / "_review"
 
+    def write_draft(self, feature="f"):
+        """核销前门禁：落一份含 mermaid 草稿的 analysis-draft.md。"""
+        d = self.review(feature)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "analysis-draft.md").write_text(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n",
+            encoding="utf-8")
+
     def test_settle_exact_match_not_substring(self):
         """审计修复实证：INF-1 不许误中正文提到 'INF-1' 的行，也不误中 INF-10。"""
         store = self.mgr._store("f")
@@ -80,7 +88,8 @@ class AlignmentHardeningTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         checklist = (self.review() / "pending-questions.md").read_text("utf-8")
         self.assertIn(f"- [~] [{t1}]", checklist)
-        # 废弃的题不可再 resolve
+        # 废弃的题不可再 resolve（先有草稿，确保拦它的是"已废弃"而非门禁）
+        self.write_draft()
         self.assertFalse(self.mgr.resolve_question("f", t1, "x", "y", "z", "w")["ok"])
         # 还剩一题未决 → 不就绪
         self.assertFalse(self.mgr.list_pending("f")["intent_aligned_ready"])
@@ -98,7 +107,8 @@ class AlignmentHardeningTests(unittest.TestCase):
         r2 = self.mgr.record_inference("f", "gap2", "c2", "b2")
         self.assertTrue(self.mgr.abandon_inference("f", r1["inference_id"], "前提不成立")["ok"])
         self.assertEqual(self.mgr.list_pending("f")["pending_inferences"], 1)
-        # 废弃的不可再确认
+        # 废弃的不可再确认（先有草稿，确保拦它的是"已废弃"而非门禁）
+        self.write_draft()
         result = self.mgr.confirm_inferences("f", [{"id": r1["inference_id"], "approved": True, "landing": "x"}], "张三")
         self.assertEqual(len(result["failed"]), 1)
         # 编号不复用：下一个必须是 INF-3

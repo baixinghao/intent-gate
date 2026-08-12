@@ -505,5 +505,83 @@ class L12ProseAnchorTests(LintTestBase):
         self.assertNotIn("L12", _rules(findings))
 
 
+class L13PlaceholderTests(LintTestBase):
+    """双层意图对齐·绘图层探测器：图内占位符 ???/TBDn 残留 = CRITICAL；
+    占位只许代码实证/人类拍板消除，禁止猜测填空后交付。"""
+
+    def test_tbd_edge_placeholder_critical(self):
+        """summary 状态机含 --> TBD1 占位边 → L13 CRITICAL。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+            "    DRAFT --> TBD1: 退款去向未知\n"
+            "    DRAFT --> SUCCESS: 直达\n```\n"
+        )
+        self.assertTrue(
+            any(r == "L13" and lv == "CRITICAL" and "TBD1" in d
+                for lv, r, d in findings),
+            f"L13 未抓 TBD1 占位: {findings}",
+        )
+
+    def test_bare_question_marks_critical(self):
+        """裸 ??? 兼容扫描：mermaid 块内出现即 L13 CRITICAL。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n```mermaid\nstateDiagram-v2\n"
+            "    state \"???待确认\" as TBD2\n```\n"
+        )
+        self.assertTrue(
+            any(r == "L13" and lv == "CRITICAL" for lv, r, d in findings),
+            f"L13 未抓裸 ???: {findings}",
+        )
+
+    def test_prose_tbd_reference_not_fined(self):
+        """防误伤：散文里的 TBD 引用（PRD 原文「§8 TBD」/断层清单「TBD2」）
+        不算占位——L13 只扫 mermaid 块。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\nPRD 原文「§8 TBD」，TBD项较多。\n"
+            "断层清单：✏️绘图层 TBD2 待决。\n\n"
+            "```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n"
+        )
+        self.assertNotIn("L13", _rules(findings))
+
+
+class L13bDraftPlaceholderTests(LintTestBase):
+    """L13b（MINOR，单方向）：草稿图占位仍在但待决清单无在飞题，
+    疑似猜测填空或漏发题。"""
+
+    def write_draft(self, mermaid_body: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(
+            f"# 草稿\n\n```mermaid\n{mermaid_body}\n```\n", encoding="utf-8")
+
+    def write_pending(self, text: str):
+        (self.root / "_review" / "pending-questions.md").write_text(text, encoding="utf-8")
+
+    def test_draft_placeholder_without_open_question_minor(self):
+        """草稿图含占位 + 待决清单无 `- [ ]` 在飞题 → L13b MINOR。"""
+        self.write_draft("stateDiagram-v2\n    A --> TBD1")
+        self.write_pending("# 待决\n\n- [x] [HG-AAAA] 已核销题\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        l13b = [(lv, d) for lv, r, d in findings if r == "L13b"]
+        self.assertEqual(len(l13b), 1)
+        self.assertEqual(l13b[0][0], "MINOR")
+
+    def test_draft_placeholder_with_open_question_silent(self):
+        """草稿图含占位但有在飞题 → 不报（占位正在等答案，合法中间态）。"""
+        self.write_draft("stateDiagram-v2\n    A --> TBD1")
+        self.write_pending("# 待决\n\n- [ ] [HG-AAAA] 在飞题\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L13b", _rules(findings))
+
+    def test_draft_prose_tbd_reference_not_fined(self):
+        """防误伤：草稿散文引用「✏️绘图层：TBD2」不算占位——只扫 mermaid 块。"""
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(
+            "# 草稿\n\n✏️绘图层：TBD2 待决（散文引用）\n", encoding="utf-8")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L13b", _rules(findings))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,13 @@ class AlignmentTestBase(unittest.TestCase):
     def review_dir(self, feature="order-refund"):
         return self.root / ".harness" / "requests" / feature / "_review"
 
+    def write_draft(self, feature="order-refund", with_mermaid=True):
+        d = self.review_dir(feature)
+        d.mkdir(parents=True, exist_ok=True)
+        body = "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n" if with_mermaid \
+            else "# 草稿\n\n无需画图：纯文案需求，不触发任何图。\n"
+        (d / "analysis-draft.md").write_text(body, encoding="utf-8")
+
     def inbound(self, text, sender, nick):
         """intent-gate-service 入站回调的单源契约函数（single 通道测试直接调它）。"""
         return file_inbound_reply(self.root, WHITELIST, text, sender, nick)
@@ -118,6 +125,7 @@ class InboundAndCollectTests(AlignmentTestBase):
         # 领取即归档，第二次 collect 必须为空（防重复注入）
         self.assertEqual(self.mgr.collect_answers("order-refund"), [])
 
+        self.write_draft()  # 核销前须先有绘图层草稿（门禁）
         result = self.mgr.resolve_question(
             "order-refund", token,
             answers[0]["answer"], "张三",
@@ -147,6 +155,7 @@ class InboundAndCollectTests(AlignmentTestBase):
         """对话框兜底与代码实证，人类原话字段两种合法形态。"""
         t1 = run(self.mgr.dispatch_question("f", "业务题", "📋", OPTIONS))["token"]
         t2 = run(self.mgr.dispatch_question("f", "技术题", "🔧", OPTIONS))["token"]
+        self.write_draft("f")
         self.mgr.resolve_question("f", t1, "就选2", "张三",
                                   "注入语义A", "落点A", source="dialog")
         self.mgr.resolve_question("f", t2, "stock:{skuId}", "StockService.deduct",
@@ -164,6 +173,7 @@ class InferenceTests(AlignmentTestBase):
         )
         self.assertTrue(rec["ok"])
         inf_id = rec["inference_id"]
+        self.write_draft("f")
         result = self.mgr.confirm_inferences(
             "f",
             [{"id": inf_id, "approved": True,
@@ -184,6 +194,7 @@ class InferenceTests(AlignmentTestBase):
 
     def test_reject_inference(self):
         rec = self.mgr.record_inference("f", "gap", "结论", "依据")
+        self.write_draft("f")
         result = self.mgr.confirm_inferences(
             "f", [{"id": rec["inference_id"], "approved": False}], "张三"
         )
@@ -200,6 +211,7 @@ class InferenceTests(AlignmentTestBase):
     def test_confirm_approved_requires_precise_landing(self):
         """🔴 确认即注入：approved 不给精确落点必须驳回（禁虚词落点）。"""
         rec = self.mgr.record_inference("f", "gap", "结论", "依据")
+        self.write_draft("f")
         result = self.mgr.confirm_inferences(
             "f", [{"id": rec["inference_id"], "approved": True}], "张三"  # 缺 landing
         )
@@ -213,6 +225,7 @@ class ResolveDisciplineTests(AlignmentTestBase):
     def test_resolve_rejects_empty_landing(self):
         """🔴 空解读/空落点禁止核销——防止静默丢弃意图。"""
         token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        self.write_draft("f")
         result = self.mgr.resolve_question("f", token, "选1", "张三", "", "")
         self.assertFalse(result["ok"])
         # 题必须还挂着，没打勾
@@ -241,6 +254,7 @@ class ListPendingTests(AlignmentTestBase):
         self.assertFalse(self.mgr.list_pending("f")["intent_aligned_ready"])
         self.inbound(f"[{token}] 选1", "lisi", "李四")
         answers = self.mgr.collect_answers("f")
+        self.write_draft("f")
         self.mgr.resolve_question("f", token, answers[0]["answer"], "李四",
                                   "语义", "落点")
         status = self.mgr.list_pending("f")
@@ -267,6 +281,7 @@ class LedgerHardeningTests(AlignmentTestBase):
     def test_confirm_inference_requires_interpretation(self):
         """approved 缺 interpretation 时禁止静默回退为推断结论。"""
         inf_id = self.mgr.record_inference("f", "边界 gap", "推断结论", "依据链")["inference_id"]
+        self.write_draft("f")
         result = self.mgr.confirm_inferences(
             "f", [{"id": inf_id, "approved": True, "landing": "§4 REFUNDING 边"}], "张三")
         self.assertEqual(result["settled"], [])
@@ -294,12 +309,65 @@ class LedgerHardeningTests(AlignmentTestBase):
     def test_unconsumed_inbox_blocks_ready(self):
         """inbox 躺着未领取答案时 list_pending 不得报就绪（与 resume 同口径）。"""
         token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        self.write_draft("f")
         self.mgr.resolve_question("f", token, "选1", "张三", "语义", "落点")
         self.assertTrue(self.mgr.list_pending("f")["intent_aligned_ready"])
         self.mgr._store("f").write_inbox(token, "迟到的回复", "zhangsan", "张三")
         lp = self.mgr.list_pending("f")
         self.assertFalse(lp["intent_aligned_ready"])
         self.assertEqual(lp["inbox_new_answers"], 1)
+
+
+class DraftGateTests(AlignmentTestBase):
+    """双层意图对齐·核销前草稿门禁：不许带着没动过笔的状态进入核销。"""
+
+    def dispatch_one(self) -> str:
+        return run(self.mgr.dispatch_question(
+            "order-refund", "退款后订单状态？", "📋", OPTIONS
+        ))["token"]
+
+    def test_resolve_rejected_without_draft(self):
+        """无草稿直接核销 → 拒收，题保持未决。"""
+        token = self.dispatch_one()
+        result = self.mgr.resolve_question(
+            "order-refund", token, "选1", "张三", "语义", "落点")
+        self.assertFalse(result["ok"])
+        self.assertIn("草稿", result["reason"])
+        checklist = (self.review_dir() / "pending-questions.md").read_text("utf-8")
+        self.assertIn(f"- [ ] [{token}]", checklist)
+
+    def test_resolve_passes_with_mermaid_draft(self):
+        """草稿含 mermaid 块 → 放行核销。"""
+        token = self.dispatch_one()
+        self.write_draft()
+        result = self.mgr.resolve_question(
+            "order-refund", token, "选1", "张三", "语义", "落点")
+        self.assertTrue(result["ok"])
+
+    def test_resolve_passes_with_no_diagram_declaration(self):
+        """草稿无 mermaid 但显式声明「无需画图」→ 放行（simple 场景豁免通道）。"""
+        token = self.dispatch_one()
+        self.write_draft(with_mermaid=False)
+        result = self.mgr.resolve_question(
+            "order-refund", token, "选1", "张三", "语义", "落点")
+        self.assertTrue(result["ok"])
+
+    def test_confirm_inferences_gated_the_same(self):
+        """confirm_inferences 同样被门禁拦截/放行。"""
+        inf_id = self.mgr.record_inference("f", "gap", "结论", "依据")["inference_id"]
+        blocked = self.mgr.confirm_inferences(
+            "f", [{"id": inf_id, "approved": True,
+                   "interpretation": "x", "landing": "落点"}], "张三")
+        self.assertFalse(blocked["ok"])
+        self.assertIn("草稿", blocked["reason"])
+        # 推断必须仍未结算（门禁拒收不产生副作用）
+        self.assertEqual(self.mgr.list_pending("f")["pending_inferences"], 1)
+        self.write_draft("f")
+        passed = self.mgr.confirm_inferences(
+            "f", [{"id": inf_id, "approved": True,
+                   "interpretation": "x", "landing": "落点"}], "张三")
+        self.assertTrue(passed["ok"])
+        self.assertEqual(passed["failed"], [])
 
 
 if __name__ == "__main__":

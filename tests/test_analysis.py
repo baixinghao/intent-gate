@@ -142,6 +142,12 @@ class ResumePathTests(AnalysisTestBase):
         mgr = self._make_site()
         # 再补一题，然后把题答完、推断确认完（对话框兜底路径直接 resolve）
         asyncio.run(mgr.dispatch_question("order-refund", "第二题", "📋", ["a", "b", "c"]))
+        # 核销前门禁：落一份含 mermaid 的绘图层草稿
+        draft = (self.root / ".harness" / "requests" / "order-refund"
+                 / "_review" / "analysis-draft.md")
+        draft.write_text(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n",
+            encoding="utf-8")
         store_pending = mgr.list_pending("order-refund")
         tokens = [re.search(r"HG-[0-9A-F]{4}", line).group(0)
                   for line in store_pending["questions"]]

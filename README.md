@@ -38,68 +38,84 @@ win** — every edge, step and rule already has a home, so any competent agent c
 implement the spec. That is why intent-gate deliberately does NOT touch coding,
 review or deployment: downstream agents are interchangeable; the input contract is not.
 
-## A real run: the withdrawal confirmation page
+## Dual-layer intent alignment
+
+**The diagram is the instrument, not a deliverable.** Layer 1 (reading): sweep the
+PRD text for explicit ambiguities. Layer 2 (drawing): hard-draw draft diagrams in
+the FIRST turn — every node/edge that can't be drawn yet becomes a `TBDn`
+placeholder, never a guess (every edge is a forced decision). Placeholders route
+by kind: technical gaps go to code evidence, business gaps go to a structured
+human question — and may only be cleared by code evidence or a human ruling.
+A placeholder left in a delivered diagram is a lint CRITICAL (L13).
+
+## A real run: the smart-locker drop-off page
 
 What one real requirement looks like after a full intent-gate pass.
 
 **The requirement, in one sentence:**
 
-> "A withdrawal confirmation page — show the loan details, allow changing the term,
-> sign and submit. Must be duplicate-proof, expiry-proof, and masked."
+> "A smart-locker drop-off page — show the shipment details, allow changing the
+> locker size, scan and drop the parcel. Must be duplicate-proof, expiry-proof,
+> and masked."
 >
 > That's it. Exactly where a coding agent starts guessing.
 
 **What happened along the way:**
 
-1. The analyzer drew the state machine first — and stalled at "submit": what about
-   failure? Should duplicate protection live on the server or the frontend?
-2. 🔴 Red-light questions were asked one at a time (≥3 mutually exclusive options):
-   "How do you guard against double-submit on rapid clicks / refresh?"
-3. You ruled: **"Server-side Redisson lock, wait 10s / lease 300s"** → your words
+1. **Reading layer**: the text sweep flagged the explicit gaps (expiry? slot-size
+   rules?) straight from the PRD.
+2. **Drawing layer**: the analyzer hard-drew the state machine in the first turn —
+   and stalled at "submit": what about failure? Should duplicate protection live
+   on the server or the frontend? Each un-drawable edge became a `TBDn`
+   placeholder instead of a guess.
+3. 🔴 Red-light questions were asked one at a time (≥3 mutually exclusive options):
+   "How do you guard against double-submit on rapid clicks / re-scan?"
+4. You ruled: **"Server-side Redisson lock, wait 10s / lease 300s"** → your words
    were logged verbatim → injected into the state-machine edge and decision-table BR-01.
-4. A mechanical lint gate ran before delivery: **CRITICAL = 0** or it does not ship.
+5. A mechanical lint gate ran before delivery: **CRITICAL = 0** or it does not ship —
+   and any leftover placeholder would itself be a CRITICAL.
 
 **The output: a technically annotated Mermaid contract** (full state machine):
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> WITHDRAW_CONFIRM: 进入确认页 (DB_QUERY_SIGN_ORDER, CHANNEL_ROUTING_QUERY)
-    WITHDRAW_CONFIRM --> OPTIONAL_PERIOD_LOADING: 请求可选期数 (DECISION_GET_OPTIONAL_PERIOD)
-    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取成功 (RETURN_PERIOD_LIST)
-    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取失败 (RETURN_ERROR, PERIOD_EDIT_DISABLED)
-    WITHDRAW_CONFIRM --> ROUTING_PROCESSING: 修改期数或金额 (DB_INSERT_SIGN_ORDER_CHANNEL, DB_UPDATE_SIGN_ORDER)
-    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由成功 (DB_UPDATE_SIGN_ORDER_CHANNEL, RETURN_NEW_QUOTE)
-    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
-    WITHDRAW_CONFIRM --> EXPIRED: 签署时效超时 (RETURN_ERROR_CODE, GUIDE_REENTER)
+    [*] --> DROP_CONFIRM: 进入寄件确认页 (DB_QUERY_SHIPMENT, LOCKER_ROUTING_QUERY)
+    DROP_CONFIRM --> SLOT_OPTIONS_LOADING: 请求可用柜格 (IOT_GET_FREE_SLOTS)
+    SLOT_OPTIONS_LOADING --> DROP_CONFIRM: 获取成功 (RETURN_SLOT_LIST)
+    SLOT_OPTIONS_LOADING --> DROP_CONFIRM: 获取失败 (RETURN_ERROR, SIZE_EDIT_DISABLED)
+    DROP_CONFIRM --> SLOT_ROUTING: 修改柜型或站点 (DB_INSERT_SHIPMENT_SLOT, DB_UPDATE_SHIPMENT)
+    SLOT_ROUTING --> DROP_CONFIRM: 路由成功 (DB_UPDATE_SHIPMENT_SLOT, RETURN_NEW_FEE)
+    SLOT_ROUTING --> DROP_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
+    DROP_CONFIRM --> EXPIRED: 扫码时效超时 (RETURN_ERROR_CODE, GUIDE_RESCAN)
     EXPIRED --> [*]: 引导回首页 (FRONTEND_NAVIGATE)
-    WITHDRAW_CONFIRM --> SUBMITTING: 点击确认借款 (REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)
-    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SIGN_ORDER, QUERY_CURRENT_STEP)
-    SUBMITTING --> WITHDRAW_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
-    SUBMITTING --> TERMINATE: 流程激活失败 (DB_UPDATE_WITHDRAW_STATUS_TERMINATE)
-    STEP_QUERY --> LOADING: WithdrawStep=loading (RETURN_NEXT_STEP)
-    STEP_QUERY --> PAYMENT_AUTH: WithdrawStep=paymentAuth (RETURN_NEXT_STEP)
-    STEP_QUERY --> PAY_CHANNEL: WithdrawStep=payChannel (RETURN_NEXT_STEP)
-    STEP_QUERY --> QUERY_PROGRESS: WithdrawStep=queryProgress (RETURN_NEXT_STEP)
-    STEP_QUERY --> WITHDRAW_CONFIRM: WithdrawStep=withdrawConfirm (STAY_ON_PAGE)
+    DROP_CONFIRM --> SUBMITTING: 点击确认投递 (REDIS_LOCK_SUBMIT, IOT_UNLOCK_COMMAND)
+    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SHIPMENT, QUERY_CURRENT_STEP)
+    SUBMITTING --> DROP_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
+    SUBMITTING --> TERMINATE: 开柜指令失败 (DB_UPDATE_DROP_STATUS_TERMINATE)
+    STEP_QUERY --> LOADING: DropStep=awaitingDrop (RETURN_NEXT_STEP)
+    STEP_QUERY --> IDENTITY_CHECK: DropStep=identityCheck (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAY_CHANNEL: DropStep=payChannel (RETURN_NEXT_STEP)
+    STEP_QUERY --> QUERY_PROGRESS: DropStep=queryProgress (RETURN_NEXT_STEP)
+    STEP_QUERY --> DROP_CONFIRM: DropStep=dropConfirm (STAY_ON_PAGE)
     LOADING --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
-    PAYMENT_AUTH --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    IDENTITY_CHECK --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
     PAY_CHANNEL --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
     QUERY_PROGRESS --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
-    SUCCESS --> [*]: 确认流程结束 (END)
-    TERMINATE --> [*]: 订单终止 (END)
+    SUCCESS --> [*]: 投递流程结束 (END)
+    TERMINATE --> [*]: 运单终止 (END)
 ```
 
 Every edge carries a mandatory technical-action annotation — the edge
-`WITHDRAW_CONFIRM --> SUBMITTING` reads `(REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)`.
+`DROP_CONFIRM --> SUBMITTING` reads `(REDIS_LOCK_SUBMIT, IOT_UNLOCK_COMMAND)`.
 What the coding agent receives is a spec, not an illustration.
 
 **Decision table** (rule logic forced into a matrix — no "happy path only" survival):
 
 | Rule | Condition | Action | Failure branch |
 |---|---|---|---|
-| BR-01 | Submit: lock `LOCK:withdraw:submit:{orderId}` conflict | Redisson lock serializes, concurrent submits rejected | Lock conflict → error code `DUPLICATE_SUBMIT` |
-| BR-07 | Signing deadline `signExpireTime` | 5-minute double check: page countdown + server-side fallback on submit | Expired → `SIGN_EXPIRED`, guide re-entry |
+| BR-01 | Submit: lock `LOCK:dropoff:submit:{shipmentId}` conflict | Redisson lock serializes, concurrent submits rejected | Lock conflict → error code `DUPLICATE_SUBMIT` |
+| BR-07 | Scan deadline `scanExpireTime` | 5-minute double check: page countdown + server-side fallback on submit | Expired → `SCAN_EXPIRED`, guide re-scan |
 
 The full contract: 10 business rules (BR-01..BR-10) + 3 sequence diagrams + an
 intent-injection mapping table (15 Q&A rounds, every answer on record).
@@ -125,8 +141,8 @@ intent-gate accepts **UTF-8 text files** or **.docx** (the dominant format for b
 
 | Way | Example | Notes |
 |---|---|---|
-| Absolute path | `analyze D:\docs\withdraw-confirm.docx` | Most reliable; readable from anywhere |
-| Relative path | `analyze docs/withdraw-confirm.md` | Resolved against the project root (`HG_WORKSPACE_ROOT`, defaults to the startup directory) |
+| Absolute path | `analyze D:\docs\locker-dropoff.docx` | Most reliable; readable from anywhere |
+| Relative path | `analyze docs/locker-dropoff.md` | Resolved against the project root (`HG_WORKSPACE_ROOT`, defaults to the startup directory) |
 | Conversation attachment | Drag the file into the chat; have the agent persist it first | Attachments are conversation content to the host, not a path — the agent must write them to disk before handing over a path |
 
 **Supported formats:**
@@ -436,7 +452,7 @@ src/intent_gate/
 ├── analysis/                     # requirement-analysis subsystem
 │   ├── playbook.md               #   requirement-analysis playbook (distributed in full via MCP prompt)
 │   ├── engine.py                 #   gap adjudication / host-judgment bookkeeping
-│   ├── lint.py                   #   mechanical checker for analysis reports (L0-L8 + three matrices)
+│   ├── lint.py                   #   mechanical checker for analysis reports (L0-L13 + three matrices)
 │   ├── mapper.py                 #   anchor locating for the intent-injection mapping table
 │   └── tools.py                  #   MCP tool registration (analysis tools + playbook prompt)
 skills/

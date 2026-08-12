@@ -34,63 +34,73 @@ PRD ──▶【intent-gate：置信度门禁 → 意图对齐 → mermaid 契�
 都有了着落，换个像样的 agent 都能实现。所以 intent-gate 刻意不碰编码/评审/部署：
 下游 agent 是可替换的，输入契约不可替代。
 
-## 真实实践：提现确认页
+## 双层意图对齐
+
+**图是探测仪器，不是交付物。** 第一层·阅读探测：扫 PRD 文本里的显性歧义
+（九类清单）；第二层·绘图探测：第一回合就硬画草稿图——画不下去的节点/边
+一律 `TBDn` 占位，绝不猜测（每条边都是一次被迫决策）。占位按类分流：
+技术断层翻旧代码实证，业务断层发结构化问题问人类；且只许被代码实证或
+人类拍板消除。交付的图里残留占位 = lint CRITICAL（L13）。
+
+## 真实实践：智能快递柜寄件页
 
 一个真实需求走完 intent-gate 全流程的样子。
 
 **需求一句话**：
 
-> 「提现确认页——展示借款信息、可修改期数、签名提交。要求防重、防过期、脱敏。」
+> 「快递柜寄件确认页——展示运单信息、可修改柜型、扫码投递。要求防重、防过期、脱敏。」
 >
 > 没有更多细节。这正是编码 agent 开始猜的地方。
 
 **过程中发生了什么**：
 
-1. 分析器先画状态机，在「提交」处卡住：失败怎么办？防重在服务端还是前端？
-2. 🔴 红灯题逐题问你（一次一个，≥3 个互斥选项）：「连点 / 刷新重提如何防？」
-3. 你拍板：「服务端 Redisson 锁，wait 10s / lease 300s」→ 原话逐字落账 → 注入状态机边与决策表 BR-01
-4. 交付前 lint 机械自检：**CRITICAL 0** 才放行。
+1. **阅读层**：文本扫雷直接从 PRD 里扫出显性歧义（时效？柜型规则？）
+2. **绘图层**：分析器第一回合就硬画状态机，在「提交」处卡住：失败怎么办？
+   防重在服务端还是前端？画不下去的边一律 `TBDn` 占位，不猜
+3. 🔴 红灯题逐题问你（一次一个，≥3 个互斥选项）：「连点 / 重新扫码重提如何防？」
+4. 你拍板：「服务端 Redisson 锁，wait 10s / lease 300s」→ 原话逐字落账 → 注入状态机边与决策表 BR-01
+5. 交付前 lint 机械自检：**CRITICAL 0** 才放行——残留占位本身也是 CRITICAL
 
 **产出：带技术打标的 mermaid 契约**（完整状态机）：
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> WITHDRAW_CONFIRM: 进入确认页 (DB_QUERY_SIGN_ORDER, CHANNEL_ROUTING_QUERY)
-    WITHDRAW_CONFIRM --> OPTIONAL_PERIOD_LOADING: 请求可选期数 (DECISION_GET_OPTIONAL_PERIOD)
-    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取成功 (RETURN_PERIOD_LIST)
-    OPTIONAL_PERIOD_LOADING --> WITHDRAW_CONFIRM: 获取失败 (RETURN_ERROR, PERIOD_EDIT_DISABLED)
-    WITHDRAW_CONFIRM --> ROUTING_PROCESSING: 修改期数或金额 (DB_INSERT_SIGN_ORDER_CHANNEL, DB_UPDATE_SIGN_ORDER)
-    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由成功 (DB_UPDATE_SIGN_ORDER_CHANNEL, RETURN_NEW_QUOTE)
-    ROUTING_PROCESSING --> WITHDRAW_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
-    WITHDRAW_CONFIRM --> EXPIRED: 签署时效超时 (RETURN_ERROR_CODE, GUIDE_REENTER)
+    [*] --> DROP_CONFIRM: 进入寄件确认页 (DB_QUERY_SHIPMENT, LOCKER_ROUTING_QUERY)
+    DROP_CONFIRM --> SLOT_OPTIONS_LOADING: 请求可用柜格 (IOT_GET_FREE_SLOTS)
+    SLOT_OPTIONS_LOADING --> DROP_CONFIRM: 获取成功 (RETURN_SLOT_LIST)
+    SLOT_OPTIONS_LOADING --> DROP_CONFIRM: 获取失败 (RETURN_ERROR, SIZE_EDIT_DISABLED)
+    DROP_CONFIRM --> SLOT_ROUTING: 修改柜型或站点 (DB_INSERT_SHIPMENT_SLOT, DB_UPDATE_SHIPMENT)
+    SLOT_ROUTING --> DROP_CONFIRM: 路由成功 (DB_UPDATE_SHIPMENT_SLOT, RETURN_NEW_FEE)
+    SLOT_ROUTING --> DROP_CONFIRM: 路由失败 (RETURN_ERROR, ROLLBACK_OR_KEEP_ORIGIN)
+    DROP_CONFIRM --> EXPIRED: 扫码时效超时 (RETURN_ERROR_CODE, GUIDE_RESCAN)
     EXPIRED --> [*]: 引导回首页 (FRONTEND_NAVIGATE)
-    WITHDRAW_CONFIRM --> SUBMITTING: 点击确认借款 (REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)
-    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SIGN_ORDER, QUERY_CURRENT_STEP)
-    SUBMITTING --> WITHDRAW_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
-    SUBMITTING --> TERMINATE: 流程激活失败 (DB_UPDATE_WITHDRAW_STATUS_TERMINATE)
-    STEP_QUERY --> LOADING: WithdrawStep=loading (RETURN_NEXT_STEP)
-    STEP_QUERY --> PAYMENT_AUTH: WithdrawStep=paymentAuth (RETURN_NEXT_STEP)
-    STEP_QUERY --> PAY_CHANNEL: WithdrawStep=payChannel (RETURN_NEXT_STEP)
-    STEP_QUERY --> QUERY_PROGRESS: WithdrawStep=queryProgress (RETURN_NEXT_STEP)
-    STEP_QUERY --> WITHDRAW_CONFIRM: WithdrawStep=withdrawConfirm (STAY_ON_PAGE)
+    DROP_CONFIRM --> SUBMITTING: 点击确认投递 (REDIS_LOCK_SUBMIT, IOT_UNLOCK_COMMAND)
+    SUBMITTING --> STEP_QUERY: 提交成功 (DB_UPDATE_SHIPMENT, QUERY_CURRENT_STEP)
+    SUBMITTING --> DROP_CONFIRM: 提交失败 (RELEASE_LOCK, RETURN_ERROR)
+    SUBMITTING --> TERMINATE: 开柜指令失败 (DB_UPDATE_DROP_STATUS_TERMINATE)
+    STEP_QUERY --> LOADING: DropStep=awaitingDrop (RETURN_NEXT_STEP)
+    STEP_QUERY --> IDENTITY_CHECK: DropStep=identityCheck (RETURN_NEXT_STEP)
+    STEP_QUERY --> PAY_CHANNEL: DropStep=payChannel (RETURN_NEXT_STEP)
+    STEP_QUERY --> QUERY_PROGRESS: DropStep=queryProgress (RETURN_NEXT_STEP)
+    STEP_QUERY --> DROP_CONFIRM: DropStep=dropConfirm (STAY_ON_PAGE)
     LOADING --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
-    PAYMENT_AUTH --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
+    IDENTITY_CHECK --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
     PAY_CHANNEL --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
     QUERY_PROGRESS --> SUCCESS: 跳转下一步 (FRONTEND_NAVIGATE)
-    SUCCESS --> [*]: 确认流程结束 (END)
-    TERMINATE --> [*]: 订单终止 (END)
+    SUCCESS --> [*]: 投递流程结束 (END)
+    TERMINATE --> [*]: 运单终止 (END)
 ```
 
-每条边都强制带技术动作打标——`WITHDRAW_CONFIRM --> SUBMITTING` 写着
-`(REDIS_LOCK_SUBMIT, FILE_SYSTEM_UPLOAD_SIGN_IMAGE)`。编码 agent 拿到的是规格，不是示意图。
+每条边都强制带技术动作打标——`DROP_CONFIRM --> SUBMITTING` 写着
+`(REDIS_LOCK_SUBMIT, IOT_UNLOCK_COMMAND)`。编码 agent 拿到的是规格，不是示意图。
 
 **决策表**（规则逻辑强制成矩阵，防"只有成功路径"）：
 
 | 规则编号 | 条件 | 动作 | 异常分支 |
 |---|---|---|---|
-| BR-01 | 提交借款：`LOCK:withdraw:submit:{orderId}` 锁冲突 | Redisson 锁串行化，同单并发拒绝 | 锁冲突 → 错误码 `DUPLICATE_SUBMIT` |
-| BR-07 | 签署时效 `signExpireTime` | 5 分钟双保险：页面倒计时 + 提交时服务端兜底 | 过期 → `SIGN_EXPIRED`，引导重进 |
+| BR-01 | 确认投递：`LOCK:dropoff:submit:{shipmentId}` 锁冲突 | Redisson 锁串行化，同单并发拒绝 | 锁冲突 → 错误码 `DUPLICATE_SUBMIT` |
+| BR-07 | 扫码时效 `scanExpireTime` | 5 分钟双保险：页面倒计时 + 提交时服务端兜底 | 过期 → `SCAN_EXPIRED`，引导重新扫码 |
 
 完整契约：10 条业务规则（BR-01~BR-10）+ 3 张时序图 + 意图注入映射表（15 条问答全部留痕）。
 
@@ -107,10 +117,10 @@ CRITICAL 未归零，契约不许交付、编码不许开工——**这是代码
 
 | 维度 | 没有 intent-gate，agent 会猜 | 契约里写死的 |
 |---|---|---|
-| 防重 | 前端按钮置灰防连点 | 服务端分布式锁 `LOCK:withdraw:submit:{orderId}`（BR-01） |
-| 提交后分流 | 前端写死跳成功页 | 按 `queryCurrentStep` 返回的 `{withdrawStep, url}` 动态跳转 |
+| 防重 | 前端按钮置灰防连点 | 服务端分布式锁 `LOCK:dropoff:submit:{shipmentId}`（BR-01） |
+| 提交后分流 | 前端写死跳成功页 | 按 `queryCurrentStep` 返回的 `{dropStep, url}` 动态跳转 |
 | 失败流 | 只有成功路径，"失败？不会发生" | `SUBMITTING` 三条出边：可重试回确认页 / `TERMINATE` 终止 / 成功进 `STEP_QUERY` |
-| 过期 | 没想到 | `EXPIRED` 状态 + 5 分钟双保险 + `SIGN_EXPIRED` 错误码（BR-07） |
+| 过期 | 没想到 | `EXPIRED` 状态 + 5 分钟双保险 + `SCAN_EXPIRED` 错误码（BR-07） |
 
 ## 把 PRD 放在哪里
 
@@ -118,8 +128,8 @@ intent-gate 的输入是 **UTF-8 文本文件** 或 **.docx**（Word 需求文�
 
 | 给法 | 示例 | 说明 |
 |---|---|---|
-| 绝对路径 | `分析需求 D:\docs\提现确认.docx` | 最稳，任何位置都能读 |
-| 相对路径 | `分析需求 docs/提现确认.md` | 相对项目根（`HG_WORKSPACE_ROOT`，默认启动目录）解析 |
+| 绝对路径 | `分析需求 D:\docs\寄件确认.docx` | 最稳，任何位置都能读 |
+| 相对路径 | `分析需求 docs/寄件确认.md` | 相对项目根（`HG_WORKSPACE_ROOT`，默认启动目录）解析 |
 | 对话附件 | 把文档拖进对话，让 agent 先落盘再分析 | 附件在宿主手里是内容不是路径，agent 落盘后才能传 |
 
 **支持格式**：
@@ -168,8 +178,8 @@ intent-gate 的输入是 **UTF-8 文本文件** 或 **.docx**（Word 需求文�
 - `resolve_question` 空落点机械拒收——每条注入意图必须精确到状态机的边、时序图的
   步骤、决策表的规则号，找不到落点**禁止核销，必须回问**；
 - 落点锚点禁止手写，`draft_mapping` 脚本真实定位章节号/规则号/步骤号；
-- 交付前 `lint_summary` 机械自检（L0-L8：状态机解析失明兜底/成功终态/死状态/
-  锚点错位/BR 引用/表读写矩阵……），**CRITICAL 归零才可交付**。
+- 交付前 `lint_summary` 机械自检（L0-L13：状态机解析失明兜底/成功终态/死状态/
+  锚点错位/BR 引用/表读写矩阵/占位符残留……），**CRITICAL 归零才可交付**。
 
 ## 意图置信度为什么从产物上读
 
@@ -390,7 +400,7 @@ src/intent_gate/
 ├── analysis/                     # 需求分析子系统
 │   ├── playbook.md               #   需求分析 playbook（经 MCP prompt 全文分发）
 │   ├── engine.py                 #   现场判定 / 宿主判断落账
-│   ├── lint.py                   #   分析报告机械检查器（L0-L8 + 三矩阵）
+│   ├── lint.py                   #   分析报告机械检查器（L0-L13 + 三矩阵）
 │   ├── mapper.py                 #   意图注入映射表锚点定位
 │   └── tools.py                  #   MCP 工具注册（分析工具 + playbook prompt）
 skills/

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -65,6 +66,30 @@ def register_question(
     )
     store.add_pending(q)  # 🔴 先落盘，之后任何通道才允许发送
     return {"ok": True, "token": token, "question": q}
+
+
+# ---- 绘图层门禁（双层意图对齐，playbook Step 0.5）----
+# 画图是探测仪器不是交付物：首次核销（含推断确认、代码实证落账）前，
+# analysis-draft.md 必须已含 mermaid 草稿——或显式声明无图理由（simple 场景）。
+# 发题/领题不受限：阅读层断层合法先来；但"带着没动过笔的状态进入核销"禁止。
+_DRAFT_NO_DIAGRAM_RE = r"无需画图|无需绘图|不需要画图|无图可画|不触发任何图"
+
+
+def _require_drawing_draft(store: ReviewStore) -> dict | None:
+    """核销前门禁：草稿存在且含 mermaid 块（或显式无图声明）返回 None，否则返回拒收 dict。"""
+    draft = store.review_dir / "analysis-draft.md"
+    if not draft.exists():
+        return {"ok": False,
+                "reason": "核销前请先完成绘图层草稿：analysis-draft.md 不存在——"
+                          "画图是探测仪器，不许带着没动过笔的状态进入核销"
+                          "（playbook Step 0.5 双层意图对齐）"}
+    text = draft.read_text(encoding="utf-8")
+    if "```mermaid" not in text and not re.search(_DRAFT_NO_DIAGRAM_RE, text):
+        return {"ok": False,
+                "reason": "analysis-draft.md 不含任何 mermaid 草稿——先硬画草稿"
+                          "（卡壳处用 state \"???待确认\" as TBDn / --> TBDn 占位），再核销；"
+                          "无图需求须在草稿显式声明（无需画图/不触发任何图 + 理由）"}
+    return None
 
 
 def _find_feature_by_token(workspace_root: str | Path, token: str) -> ReviewStore | None:
@@ -207,8 +232,12 @@ class AlignmentManager:
 
         source: "group"（群回复，经 intent-gate-service 入站）| "dialog"（对话框兜底）
         | "code"（代码实证）。人类原话字段按 DESIGN.md §4.2 三种合法形态拼装。
+        🔴 核销前必须通过绘图层草稿门禁（analysis-draft.md 含 mermaid 草稿或无图声明）。
         """
         store = self._store(feature)
+        gate = _require_drawing_draft(store)
+        if gate:
+            return gate
         if not store.has_pending(token):
             return {"ok": False, "reason": f"token {token} 不在待决清单（可能已核销）"}
         # 🔴 skill 硬纪律：注入必须有解读与精确落点（状态机边/时序图步骤/
@@ -252,8 +281,12 @@ class AlignmentManager:
     ) -> dict:
         """批量确认/驳回推断。decisions 元素: {"id": "INF-1", "approved": true,
         "interpretation": "...", "landing": "..."}（approved 时后两个字段必填——
-        确认即注入，注入必须有解读与落点）。"""
+        确认即注入，注入必须有解读与落点）。
+        🔴 核销前必须通过绘图层草稿门禁（analysis-draft.md 含 mermaid 草稿或无图声明）。"""
         store = self._store(feature)
+        gate = _require_drawing_draft(store)
+        if gate:
+            return gate
         settled, failed = [], []
         for d in decisions:
             inf_id = str(d.get("id", ""))

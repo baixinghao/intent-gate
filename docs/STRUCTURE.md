@@ -81,7 +81,7 @@ intent-gate/
 │       │                        #   经 MCP prompt doc_analysis_playbook 全文分发
 │       ├── engine.py            # analyze_request（fresh 机械初筛 / resume 现场续跑）
 │       │                        #   + record_analysis（宿主语义判断校验+落账）
-│       ├── lint.py              # 【逻辑冻结】summary 机械检查器 L0-L8 + 三矩阵骨架
+│       ├── lint.py              # 【逻辑冻结】summary 机械检查器 L0-L13 + 三矩阵骨架
 │       │                        #   （终态/死状态/多出边/锚点错位/BR 引用/表读写）
 │       ├── mapper.py            # 【逻辑冻结】draft_mapping：意图注入映射表的
 │       │                        #   章节号/规则号/步骤号锚点真实定位（禁止手写）

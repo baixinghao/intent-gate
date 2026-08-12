@@ -50,7 +50,9 @@ class PlaybookFidelityTests(unittest.TestCase):
             self.assertIn(marker, self.text)
 
     def test_redblue_physically_cut(self):
-        for forbidden in ("蓝军", "红军", "review-findings", "review-request",
+        # 双层意图对齐改造后，playbook 允许以文字提及应用层蓝军检查点
+        # （R3/R9③ 复核提示）；物理产物（评审请求/发现文件）仍必须切除。
+        for forbidden in ("红军", "review-findings", "review-request",
                           "评审请求", "开单"):
             self.assertNotIn(forbidden, self.text)
 
@@ -231,6 +233,11 @@ class MapperFidelityTests(unittest.TestCase):
     def test_mapper_locates_real_anchors(self):
         # 造一题并核销（alignment-log 有 Q1，落点含 BR-01 与状态名）
         token = run(self.mgr.dispatch_question("f", "状态？", "📋", ["a", "b", "c"]))["token"]
+        # 核销前门禁：落一份含 mermaid 的绘图层草稿
+        (self.root / ".harness" / "requests" / "f" / "_review"
+         / "analysis-draft.md").write_text(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n",
+            encoding="utf-8")
         self.mgr.resolve_question(
             "f", token, "选1", "张三", "退款 → REFUNDING", "§4 REFUNDING 边 / BR-01",
         )
@@ -315,6 +322,11 @@ class SeverityVocabTests(unittest.TestCase):
         self.assertEqual(advice["status"], "blocked")
         self.assertFalse(advice["intent_aligned"])
         # 核销红灯题 → 就绪 → pending_review（approved MCP 永不自授）
+        # 核销前门禁：落一份含 mermaid 的绘图层草稿
+        (self.root / ".harness" / "requests" / "f" / "_review"
+         / "analysis-draft.md").write_text(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n",
+            encoding="utf-8")
         self.mgr.resolve_question("f", token, "选1", "张三", "语义", "落点")
         advice2 = self.mgr.list_pending("f")["frontmatter_advice"]
         self.assertEqual(advice2["status"], "pending_review")

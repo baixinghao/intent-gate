@@ -181,7 +181,7 @@ intent-gate 只跑 **single 通道**（默认且唯一）：意图断层直接�
 | **playbook 本体**（需求分析工作流全文 + agent 约束，物理切红蓝） | MCP prompt `doc_analysis_playbook`（`analysis/playbook.md`） | **已实现**。九类歧义点/精准提问格式/降级回执/型态门槛/mermaid 规范/上下文加载纪律；术语基准降级策略（无 wiki 用宿主代码检索，新造词必发题） |
 | **宿主判断落账** | 工具 `record_analysis` | **已实现**。宿主语义结论（型态/复杂度/灯/gaps）→ MCP 校验+落盘 draft |
 | **机械初筛绊线** | 工具 `analyze_requirement` | 已实现，定位为交叉校验信号（语义终判归宿主） |
-| **lint 机械自检** | 工具 `lint_summary`（`analysis/lint.py`） | **已实现**。L0-L8 检查 + 三矩阵生成，逻辑冻结，禁止重写 |
+| **lint 机械自检** | 工具 `lint_summary`（`analysis/lint.py`） | **已实现**。L0-L13 检查 + 三矩阵生成，逻辑冻结，禁止重写 |
 | **映射表锚点定位** | 工具 `draft_mapping`（`analysis/mapper.py`） | **已实现**。章节号/规则号/步骤号由脚本真实定位，禁止手写锚点 |
 | **产物生成（summary.md/mermaid/DDL）** | 宿主按 playbook Step 1-4 生成 | 归宿主——生成是语义活，MCP 用 lint/落点校验守门 |
 | 红线/术语基准 | 项目文件（rules/wiki），有则宿主必读，无则走降级策略 | 不进 MCP——项目私有财产不焊死在通用工具里 |
