@@ -337,5 +337,29 @@ class SeverityVocabTests(unittest.TestCase):
         self.assertEqual(result["intent_status"]["pending_red"], 1)
 
 
+class VersionSyncTests(unittest.TestCase):
+    """版本号单一事实源：pyproject 是权威，plugin.json / __init__.__version__
+    必须逐字一致——0.4.0 发版时 plugin.json 停在 0.3.0、__init__ 停在 0.1.0，
+    用户端缓存目录名与真实代码对不上。"""
+
+    def test_versions_match_across_surfaces(self):
+        import json
+        import re as _re
+
+        root = Path(__file__).resolve().parent.parent
+        pyproject = (root / "pyproject.toml").read_text("utf-8")
+        dist_version = _re.search(r'^version = "([^"]+)"', pyproject, _re.M).group(1)
+
+        plugin = json.loads(
+            (root / ".claude-plugin" / "plugin.json").read_text("utf-8"))
+        self.assertEqual(plugin["version"], dist_version,
+                         "plugin.json version 漂移（插件缓存目录名会对不上）")
+
+        init = (root / "src" / "intent_gate" / "__init__.py").read_text("utf-8")
+        init_version = _re.search(r'__version__ = "([^"]+)"', init).group(1)
+        self.assertEqual(init_version, dist_version,
+                         "__init__.__version__ 漂移")
+
+
 if __name__ == "__main__":
     unittest.main()
