@@ -266,9 +266,34 @@ claude plugin install intent-gate@baixinghao-plugins
 
 全部变量都有默认值，**零配置即可使用**；需要调整时复制 `.env.example` 为 `.env`。
 
-## 其他 MCP client
+## 其他 MCP client / agent
 
-同样先跑第 1 步装好 server，然后把客户端指向 `intent-gate` 命令：
+执法的那一半——工具、问题账本、lint 门禁、`doc_analysis_playbook` prompt——
+是标准 MCP，任何支持 MCP prompt 的客户端都能全量使用；
+只有 skills/hooks 那一半是 Claude Code 专属。
+
+跑完第 1 步（`pipx`/`uv tool install intent-gate-mcp`）后，任选一种注册方式：
+
+**一行命令（agent 自带 CLI 的）：**
+
+```bash
+claude mcp add intent-gate -- intent-gate                          # Claude Code
+kimi mcp add --transport stdio intent-gate -- intent-gate          # Kimi CLI
+codex mcp add intent-gate -- intent-gate                           # Codex CLI
+```
+
+**配置文件：**
+
+| Agent | 配置文件 | 根键 |
+|---|---|---|
+| Cursor | `.cursor/mcp.json`（项目）/ `~/.cursor/mcp.json`（全局） | `mcpServers` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| Gemini CLI | `~/.gemini/settings.json` / `.gemini/settings.json` | `mcpServers` |
+| Kimi CLI | `~/.kimi/mcp.json` | `mcpServers` |
+| VS Code (Copilot) | `.vscode/mcp.json` | `servers` ⚠️ |
+| Codex CLI | `~/.codex/config.toml` | `[mcp_servers.*]` ⚠️ |
+
+所有 `mcpServers` 风格的客户端共用一个形态：
 
 ```json
 {
@@ -279,6 +304,31 @@ claude plugin install intent-gate@baixinghao-plugins
   }
 }
 ```
+
+VS Code 注意根键不同且必须带 `type`：
+
+```json
+{
+  "servers": {
+    "intent-gate": {
+      "type": "stdio",
+      "command": "intent-gate"
+    }
+  }
+}
+```
+
+Codex CLI 用 TOML，表名必须是下划线的 `mcp_servers`（写成 `mcp-servers` 会被静默忽略）：
+
+```toml
+[mcp_servers.intent-gate]
+command = "intent-gate"
+```
+
+不管哪个客户端，开局先让 agent 完整读一遍 MCP prompt
+`doc_analysis_playbook`——它是法律，随 server 分发，不依赖任何插件。
+（客户端不支持 MCP prompt 的，让 agent 直接读
+`src/intent_gate/analysis/playbook.md`，同一份文本。）
 
 客户端走网络协议的话，用 `intent-gate --mcp-transport sse --mcp-port 8400`
 以 **SSE** 暴露 MCP。

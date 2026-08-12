@@ -304,9 +304,34 @@ are live.
 
 Every variable has a default — **zero config to use**; copy `.env.example` to `.env` only when you want to adjust.
 
-## Other MCP clients
+## Other MCP clients / agents
 
-Install the server as in step 1, then point your client at the `intent-gate` command:
+The enforcement half — tools, question ledger, lint gates, and the
+`doc_analysis_playbook` prompt — is plain MCP and works in any client that
+supports MCP prompts. Only the skills/hooks half is Claude Code-specific.
+
+After step 1 (`pipx`/`uv tool install intent-gate-mcp`), register one way:
+
+**One-liners (agents that provide a CLI):**
+
+```bash
+claude mcp add intent-gate -- intent-gate                          # Claude Code
+kimi mcp add --transport stdio intent-gate -- intent-gate          # Kimi CLI
+codex mcp add intent-gate -- intent-gate                           # Codex CLI
+```
+
+**Config files:**
+
+| Agent | Config file | Root key |
+|---|---|---|
+| Cursor | `.cursor/mcp.json`（项目）/ `~/.cursor/mcp.json`（全局） | `mcpServers` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| Gemini CLI | `~/.gemini/settings.json` / `.gemini/settings.json` | `mcpServers` |
+| Kimi CLI | `~/.kimi/mcp.json` | `mcpServers` |
+| VS Code (Copilot) | `.vscode/mcp.json` | `servers` ⚠️ |
+| Codex CLI | `~/.codex/config.toml` | `[mcp_servers.*]` ⚠️ |
+
+All `mcpServers`-style clients share one shape:
 
 ```json
 {
@@ -317,6 +342,32 @@ Install the server as in step 1, then point your client at the `intent-gate` com
   }
 }
 ```
+
+VS Code — note the different root key and the required `type`:
+
+```json
+{
+  "servers": {
+    "intent-gate": {
+      "type": "stdio",
+      "command": "intent-gate"
+    }
+  }
+}
+```
+
+Codex CLI — TOML, and the table name must be `mcp_servers` with an
+underscore (`mcp-servers` is silently ignored):
+
+```toml
+[mcp_servers.intent-gate]
+command = "intent-gate"
+```
+
+Whatever the client, start by asking the agent to read the MCP prompt
+`doc_analysis_playbook` in full — it is the law, and it ships with the
+server, not with any plugin. (Clients without MCP-prompt support can point
+the agent at `src/intent_gate/analysis/playbook.md` instead.)
 
 If your client speaks a network transport, expose MCP over **SSE** with
 `intent-gate --mcp-transport sse --mcp-port 8400`.
