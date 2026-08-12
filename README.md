@@ -251,6 +251,13 @@ reference source.
   answers carry a staffId and the original wording and are publicly visible —
   **no objection in the group ≈ consensus**. The main plugin defaults to the `single`
   channel, zero config.
+- **Contract-driven coding** (`contract-coding` skill): an **addendum layer** for the
+  coding phase — when a requirement's contract exists
+  (`.harness/requests/{feature}/summary.md`), code is generated FROM the mermaid
+  contract (every edge/rule maps to an implementation anchor), and drift stops the
+  line: the contract gets amended first, then the code follows. It layers on top of
+  your own coding skills / superpowers and never replaces them — your project keeps
+  full ownership of HOW to write code; this skill only owns contract fidelity.
 
 ## Environment requirements
 
@@ -435,6 +442,7 @@ src/intent_gate/
 skills/
 ├── using-intent-gate/            # entry discipline: when to escalate, where the optional capabilities live
 ├── requirement-alignment/        # intent-alignment workflow outline → points to the MCP prompt
+├── contract-coding/              # coding-phase addendum: code generated FROM the mermaid contract, layers over your own coding skills
 └── red-blue-review/              # optional: red-blue adversarial review playbook (blue-team nine checks + red-team rectification discipline)
 (sister repo) intent-gate-service # DingTalk group channel + decision gates (standalone MCP service)
 ```

@@ -216,6 +216,10 @@ lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性
   业务断层归业务人员、技术断层归技术人员——漏斗第③级可发钉钉群 @对应角色，
   回复经回调落盘 inbox 领取。群通道的价值是**留痕**：回答带 staffId、带原话、
   公开可见，**群里无人反驳 ≈ 共识**。主插件默认 single 通道，零配置即用。
+- **契约驱动编码**（`contract-coding` skill）：编码期的**附加层**——当需求契约存在
+  （`.harness/requests/{需求名}/summary.md`）时，代码从 mermaid 契约生成（每条边/规则
+  对应实现锚点），漂移即停线：先改契约再改代码。它叠加在你自己的编码 skill /
+  superpowers 之上，绝不替代——"怎么写代码"永远归你的项目规则，本 skill 只管契约保真。
 
 ## 环境要求
 
@@ -392,6 +396,7 @@ src/intent_gate/
 skills/
 ├── using-intent-gate/             # 入口纪律：何时升级人工、两个可选能力的位置
 ├── requirement-alignment/        # 意图对齐工作流纲要 → 指向 MCP prompt
+├── contract-coding/              # 编码期附加层：代码从 mermaid 契约生成，叠加在自有编码 skill 之上
 └── red-blue-review/              # 可选：红蓝对抗评审 playbook（蓝军九项检查 + 红军整改纪律）
 （姊妹仓）intent-gate-service      # 姊妹篇：钉钉群通道 + 决策闸门（独立 MCP 服务）
 ```

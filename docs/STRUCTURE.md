@@ -41,6 +41,9 @@ intent-gate/
 │   │                                    #   两个可选能力位置、编码前必须读 summary 契约
 │   ├── requirement-alignment/SKILL.md   # 【分析需求/画图/DDL/说"继续"时触发】
 │   │                                    #   三级对齐漏斗纲要 → 指向 MCP prompt playbook
+│   ├── contract-coding/SKILL.md         # 【实现有契约的需求时触发】编码期附加层：
+│   │                                    #   叠加在自有编码 skill/superpowers 之上，只立
+│   │                                    #   "代码从 mermaid 契约生成、漂移即停线"，不替代
 │   └── red-blue-review/SKILL.md         # 【可选：点名"红蓝对抗/蓝军评审"时触发】
 │                                        #   蓝军 playbook：独立 session/信息节食/R1-R9/
 │                                        #   findings 模板/2 轮熔断 ESCALATE/红军开单模板/
@@ -116,6 +119,7 @@ Claude Code 插件形态：把本目录作为插件目录加载（或软链到�
 | 分析中断后继续 | alignment 文件现场（resume 续跑） | 说"继续"，它自动对账 |
 | complex 需求交付后要对抗评审 | `red-blue-review` skill（可选） | 说"红蓝对抗/蓝军评审"；**另开新会话跑蓝军**（独立性是命根） |
 | 编码开工前 | `using-intent-gate` 注入纪律 | 不用管——它会自动检查 summary 契约与 lint |
+| 实现有契约的需求 | `contract-coding` skill（附加层） | 直接说"实现{需求名}"；它与你的编码 skill/superpowers 并存，只加契约保真纪律 |
 | 红灯决策/不可逆操作要人拍板 | 对话框兜底（single 通道） | 直接回答它的结构化选项题 |
 | 断层要发钉钉群 @业务/技术角色 | 姊妹篇 intent-gate-service（可选） | 见其自带 STRUCTURE.md |
 

@@ -88,6 +88,10 @@ Before writing code in a project, check for landed analysis artifacts:
 - Mermaid files that drift from code are bugs. If you must deviate from the
   diagram while coding, stop and escalate — the contract gets amended first,
   then the code follows.
+- **When implementing a requirement that has a contract**, the `contract-coding`
+  skill layers contract-consumption discipline on top of your normal coding
+  workflow — it complements your own coding skills / superpowers, never
+  replaces them.
 
 ## User Instructions
 
