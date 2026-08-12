@@ -45,6 +45,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/intent_gate"]
 
+# using-intent-gate 纪律文本的单一事实源在 skills/；wheel 经 force-include 携带，
+# 供 `intent-gate hook session-start`（install --target 的配套）在无插件目录的
+# agent（Cursor/Codex…）里读取。禁止在包内手抄第二份。
+[tool.hatch.build.targets.wheel.force-include]
+"skills/using-intent-gate/SKILL.md" = "intent_gate/_assets/using-intent-gate.SKILL.md"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -12,12 +12,16 @@ intent-gate 是轻量插件：single 通道（对话框兜底），无常驻监�
 Usage:
   intent-gate                          # stdio MCP
   intent-gate --mcp-transport sse      # SSE MCP on --mcp-port
+  intent-gate install --target cursor  # 把 session-start 纪律注入接进 agent hooks
+  intent-gate hook session-start --format cursor   # 上者的配套 hook 命令
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import sys
 
 from mcp.server.fastmcp import FastMCP
 
@@ -25,6 +29,8 @@ from .alignment.manager import AlignmentManager
 from .alignment.tools import register_alignment_tools
 from .analysis.tools import register_analysis_tools
 from .config import Settings
+from .hook import emit_session_start
+from .installer import SUPPORTED_TARGETS, install, uninstall
 from .logging import get_logger, setup_logging
 
 log = get_logger("main")
@@ -42,6 +48,20 @@ _INSTRUCTIONS = (
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="intent-gate")
+    sub = p.add_subparsers(dest="cmd")
+
+    hook_p = sub.add_parser("hook", help="发射 hook 输出（install --target 的配套命令）")
+    hook_p.add_argument("event", choices=["session-start"])
+    hook_p.add_argument("--format", choices=["cursor", "claude", "standard"],
+                        default="standard")
+
+    for name, helptext in (("install", "把 session-start 纪律注入接进 agent 的 hooks 配置"),
+                           ("uninstall", "拆除 install --target 接的线（只拆自己的）")):
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("--target", required=True, choices=SUPPORTED_TARGETS)
+        sp.add_argument("--dry-run", action="store_true",
+                        help="只打印将要写入的内容，不落盘")
+
     p.add_argument("--mcp-transport", choices=["stdio", "sse"], default="stdio")
     p.add_argument("--mcp-host", default="127.0.0.1")
     p.add_argument("--mcp-port", type=int, default=8400)
@@ -71,6 +91,14 @@ async def _run(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.cmd == "hook":
+        print(emit_session_start(args.format))
+        return
+    if args.cmd in ("install", "uninstall"):
+        fn = install if args.cmd == "install" else uninstall
+        print(json.dumps(fn(args.target, dry_run=args.dry_run),
+                         ensure_ascii=False, indent=2))
+        return
     try:
         asyncio.run(_run(args))
     except KeyboardInterrupt:
@@ -78,4 +106,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

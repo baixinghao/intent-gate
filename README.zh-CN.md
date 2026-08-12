@@ -325,6 +325,15 @@ Codex CLI 用 TOML，表名必须是下划线的 `mcp_servers`（写成 `mcp-ser
 command = "intent-gate"
 ```
 
+**Claude Code 之外的纪律注入**：SessionStart hook（每局开场自动注入入口纪律）
+本身与宿主无关。装好 server 后，一条命令接进你的 agent 的 hooks 配置——
+只合并不覆盖、幂等，`uninstall --target` 可拆线：
+
+```bash
+intent-gate install --target cursor   # 写入 ~/.cursor/hooks.json
+intent-gate install --target codex    # 追加到 ~/.codex/config.toml
+```
+
 不管哪个客户端，开局先让 agent 完整读一遍 MCP prompt
 `doc_analysis_playbook`——它是法律，随 server 分发，不依赖任何插件。
 （客户端不支持 MCP prompt 的，让 agent 直接读

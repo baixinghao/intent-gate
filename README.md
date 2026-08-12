@@ -364,6 +364,16 @@ underscore (`mcp-servers` is silently ignored):
 command = "intent-gate"
 ```
 
+**Discipline injection beyond Claude Code:** the SessionStart hook (entry
+discipline auto-injected at every session start) is host-agnostic. After
+installing the server, wire it into your agent's hooks config with one
+command — merge-only, idempotent, and `uninstall --target` reverts it:
+
+```bash
+intent-gate install --target cursor   # writes ~/.cursor/hooks.json
+intent-gate install --target codex    # appends to ~/.codex/config.toml
+```
+
 Whatever the client, start by asking the agent to read the MCP prompt
 `doc_analysis_playbook` in full — it is the law, and it ships with the
 server, not with any plugin. (Clients without MCP-prompt support can point
