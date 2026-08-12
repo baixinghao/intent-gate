@@ -376,5 +376,114 @@ class ContractDisclosureTests(LintTestBase):
         self.assertIn(lint_mod.L9_SQL_REF_RE, report)
 
 
+class L10EmptyTableMatrixTests(LintTestBase):
+    """错题 2026-08-12（红军复盘·提现确认）：§7 写成 Markdown 字段表、
+    sql/ 零产出、全文不登记 sql/ 路径——L9 一致性检查无从触发，
+    矩阵② 空表这面红旗必须自己报警。"""
+
+    def test_data_model_section_with_empty_matrix_critical(self):
+        """有「数据模型」章节但矩阵②为空 → CRITICAL（修复前红）。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 7. 数据模型（DDL 建议）\n\n"
+            "| 字段 | 类型 |\n|------|------|\n| id | BIGINT |\n"
+        )
+        self.assertTrue(
+            any(r == "L10" and lv == "CRITICAL" for lv, r, d in findings),
+            f"L10 未抓空矩阵②: {findings}",
+        )
+
+    def test_data_model_section_with_populated_sql_dir_passes(self):
+        """有数据模型章节且 sql/ 有表 → 不报。"""
+        sql_dir = self.root / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "t.sql").write_text("CREATE TABLE `pay_order` (id int);\n", "utf-8")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 7. 数据模型\n\nDDL 见 sql/pay_order.sql\n"
+            "写入：提交后 INSERT pay_order (status)\n"
+        )
+        self.assertNotIn("L10", _rules(findings))
+
+    def test_no_data_model_section_not_fined(self):
+        """防误伤：无数据模型章节（simple 需求）矩阵②为空不报。"""
+        findings, *_ = self.run_lint("# 报告\n\n## 1. 概述\n\n纯文案需求。\n")
+        self.assertNotIn("L10", _rules(findings))
+
+
+class L11ComplexEdgeTagTests(LintTestBase):
+    """错题 2026-08-12（红军复盘·提现确认）：frontmatter 自称 complex，
+    17 条边全裸触发词——约束第 3 条（complex 技术动作强制打标）需要机械半边。"""
+
+    FM = "---\nfeature: t\ncomplexity: complex\n---\n\n"
+    HEAD = "# 报告\n\n## 3. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+    TAIL = "```\n"
+
+    def test_complex_with_bare_edge_critical(self):
+        """complex + 边无 (技术动作) → CRITICAL（修复前红）。"""
+        findings, *_ = self.run_lint(
+            self.FM + self.HEAD
+            + "    DRAFT --> PROCESSING: 提交成功\n"
+            + "    PROCESSING --> FINISHED: 放款成功 (DB_UPDATE)\n"
+            + self.TAIL
+        )
+        self.assertTrue(
+            any(r == "L11" and lv == "CRITICAL" and "DRAFT" in d
+                for lv, r, d in findings),
+            f"L11 未抓裸边: {findings}",
+        )
+
+    def test_complex_all_tagged_passes(self):
+        """complex + 全边打标 → 不报。"""
+        findings, *_ = self.run_lint(
+            self.FM + self.HEAD
+            + "    DRAFT --> PROCESSING: 提交 (IF校验, DB_INSERT)\n"
+            + "    PROCESSING --> FINISHED: 放款 (DB_UPDATE)\n"
+            + self.TAIL
+        )
+        self.assertNotIn("L11", _rules(findings))
+
+    def test_non_complex_bare_edges_not_fined(self):
+        """防误伤：无 complex 声明（simple/medium）裸边不报。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    DRAFT --> PROCESSING: 提交成功\n"
+            + "    PROCESSING --> FINISHED: 放款\n"
+            + self.TAIL
+        )
+        self.assertNotIn("L11", _rules(findings))
+
+
+class L12ProseAnchorTests(LintTestBase):
+    """错题 2026-08-12（红军复盘·提现确认）：映射表锚点全是
+    「决策表 R1 / 时序图 4.3 步骤 2」散文——无 § 无 BR-，L4 无从校验。"""
+
+    def _body(self, anchor: str) -> str:
+        return (
+            "# 报告\n\n## 3.2 提交流程\n\n## 意图注入映射表\n\n"
+            "| # | 注入的意图 | 落点 | 复核 |\n"
+            "|---|-----------|------|------|\n"
+            f"| 1 | x | {anchor} | ok |\n"
+        )
+
+    def test_pure_prose_anchors_major(self):
+        """映射表有数据行但无一行含 §/BR- → MAJOR（修复前红）。"""
+        findings, *_ = self.run_lint(self._body("决策表 R1 / 时序图 4.3 步骤 2"))
+        self.assertTrue(any(r == "L12" for _, r, _ in findings))
+
+    def test_section_anchor_passes(self):
+        """含 §x.y 锚点 → 不报。"""
+        findings, *_ = self.run_lint(self._body("§3.2"))
+        self.assertNotIn("L12", _rules(findings))
+
+    def test_br_anchor_passes(self):
+        """含 BR-n 锚点 → 不报。"""
+        findings, *_ = self.run_lint(self._body("决策表 BR-01"))
+        self.assertNotIn("L12", _rules(findings))
+
+    def test_no_mapping_table_not_fined(self):
+        """防误伤：无映射表不报。"""
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L12", _rules(findings))
+
+
 if __name__ == "__main__":
     unittest.main()

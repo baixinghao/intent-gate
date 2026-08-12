@@ -24,6 +24,13 @@
   L9 路径隔离：DDL 禁止内嵌 summary.md，只落项目根 sql/（CRITICAL。
       错题集 2026-08-12：SQL 全写进 summary.md 时 L6 输入源 sql/*.sql 为空而
       静默失明——内嵌 CREATE TABLE 与「登记 sql/ 却无文件」都要抓）
+  L10 空矩阵②兜底：存在「数据模型」章节但矩阵②为空（CRITICAL。
+      错题集 2026-08-12：§7 写 Markdown 字段表 + 不登记 sql/ 路径即可绕过
+      L9——一致性检查之外补存在性强制）
+  L11 complex 技术打标强校验：frontmatter 声明 complexity: complex 时，
+      状态机每条边 label 必须含 (技术动作)（CRITICAL。错题集 2026-08-12）
+  L12 映射表锚点纯散文：数据行无一行含 §/BR- 锚点（MAJOR——
+      L4 对散文锚点无从校验，锚点必须可机检）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -51,6 +58,8 @@ L4_ANCHOR_RE = r"§(\d+(?:\.\d+)?)\s*([^\s，。；|/§()（）、]*)"
 DDL_TABLE_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?"
 L7_LOG_Q_RE = r"^## Q(\d+)"
 L7_MAP_ROW_RE = r"\s*\|\s*Q?(\d+)"
+L11_COMPLEX_RE = r"^complexity:\s*complex\s*$"  # frontmatter 自称 complex 才启用打标强校验；simple/medium 不误伤
+L12_ANCHOR_RE = r"§|BR-\d+"  # 映射表落点列的可机检锚点形态（§x.y 或 BR-n）；纯散文 L4 无从校验
 # 建表语句形态（表名+开括号）才算内嵌 DDL；散文提及「CREATE TABLE 语句…」不误伤
 L9_EMBED_DDL_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?\w+`?\s*\("
 L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook §3.4 要求的格式）；\b 锚定防 sqlite/、mysql/ 误报
@@ -121,6 +130,16 @@ def lint(summary_path: Path):
             if len(real) > 1:
                 findings.append(("MINOR", "L3", f"状态 {st} 有 {len(real)} 条出边（→{', →'.join(sorted(real))}），需人工确认触发条件可区分"))
 
+        # L11（错题集 2026-08-12）：frontmatter 自称 complex 即承诺约束第 3 条——
+        # 每条边 label 必须含 (技术动作)；裸边在 complex 场景不许交付
+        if re.search(L11_COMPLEX_RE, text, re.M):
+            bare = [f"{s} → {t}" for s, t, _, act in edges if not act]
+            if bare:
+                findings.append(("CRITICAL", "L11",
+                                 f"complexity: complex 但 {len(bare)} 条状态机边缺 (技术动作) 打标"
+                                 f"（如 {', '.join(bare[:3])}{'…' if len(bare) > 3 else ''}）——"
+                                 "每条边必须 触发动作 (技术动作1, 技术动作2)"))
+
     # ---- 章节 ----
     sections = {}
     for ln in lines:
@@ -158,6 +177,16 @@ def lint(summary_path: Path):
                     verdict = f"✅ §{num} {sections[num]}"
             anchors.append((f"§{num} {kw}".strip(), verdict))
 
+    # ---- L12 映射表锚点纯散文（错题集 2026-08-12）----
+    # 「决策表 R1 / 时序图 4.3 步骤 2」这类散文锚点让 L4 无从校验——
+    # 映射表有数据行就至少要有一行可机检锚点（§x.y 或 BR-n）
+    map_data_rows = [ln for ln in map_rows if re.match(L7_MAP_ROW_RE, ln)]
+    if map_data_rows and not any(re.search(L12_ANCHOR_RE, ln) for ln in map_data_rows):
+        findings.append(("MAJOR", "L12",
+                         f"意图注入映射表 {len(map_data_rows)} 个数据行的落点均为散文格式"
+                         "（无 §x.y / BR-n 锚点）——L4 锚点校验无从执行，"
+                         "落点必须可机检（draft_mapping 脚本定位可免手写）"))
+
     # ---- L5 ----
     # 口径与 mapper.py parse_summary 保持一致：决策表定义行 = strip 后以 "| BR" 开头。
     defined = set(re.findall(r"BR-(\d+)", "\n".join(ln for ln in lines if ln.strip().startswith("| BR"))))
@@ -183,6 +212,15 @@ def lint(summary_path: Path):
                 findings.append(("CRITICAL", "L6", f"表 {tbl} 全报告无任何写入动作（图/文均无 INSERT/UPDATE/save）"))
             if not readers:
                 findings.append(("MINOR", "L6", f"表 {tbl} 全报告无读取动作"))
+
+    # ---- L10 空矩阵②兜底（错题集 2026-08-12）----
+    # playbook Step 2：数据模型强制输出 sql/{表名}.sql。声明了「数据模型」章节
+    # 却没有任何 sql/*.sql 建表（矩阵②为空）= 存在性强制，与 L9 一致性检查互补
+    if any("数据模型" in title for title in sections.values()) and not table_matrix:
+        findings.append(("CRITICAL", "L10",
+                         "报告含「数据模型」章节但表读写矩阵为空——未在 sql/ 产出任何 "
+                         "CREATE TABLE DDL（playbook §2/§3.4：无论复杂度，"
+                         "DDL 草案强制输出 sql/{表名}.sql）"))
 
     # ---- L7 映射行 vs 日志 Q 覆盖 ----
     log_path = summary_path.parent / "_review" / "alignment-log.md"
@@ -248,6 +286,12 @@ def _contract_text() -> list[str]:
         "散文提及 CREATE TABLE 字样不误伤；DDL 只落项目根 sql/，禁止内嵌报告）",
         f"- **L9 SQL 登记检查**：出现 `{L9_SQL_REF_RE}`（相对路径登记）时，sql/ 目录必须"
         "存在且含 .sql 文件，否则 CRITICAL（目录定位同 L6）",
+        "- **L10 空矩阵②兜底**：存在「数据模型」章节但表读写矩阵为空 → CRITICAL"
+        "（存在性强制：DDL 草案必须落 sql/，与 L9 一致性检查互补）",
+        f"- **L11 complex 打标强校验**：frontmatter 命中 `{L11_COMPLEX_RE}` 时，"
+        "状态机每条边 label 必须含 (技术动作)，裸边 CRITICAL；simple/medium 不启用",
+        f"- **L12 锚点纯散文**：映射表数据行无一行含 `{L12_ANCHOR_RE}` 锚点 → MAJOR"
+        "（落点必须可机检，散文锚点 L4 无从校验）",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -261,7 +305,7 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L9 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L12 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:
