@@ -306,6 +306,14 @@ Every variable has a default — **zero config to use**; copy `.env.example` to 
 
 ## Other MCP clients / agents
 
+**Support matrix:**
+
+| Host | Status |
+|---|---|
+| Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
+| Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
+| 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
+
 The enforcement half — tools, question ledger, lint gates, and the
 `doc_analysis_playbook` prompt — is plain MCP and works in any client that
 supports MCP prompts. Only the skills/hooks half is Claude Code-specific.
