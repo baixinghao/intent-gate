@@ -408,6 +408,26 @@ class L10EmptyTableMatrixTests(LintTestBase):
         findings, *_ = self.run_lint("# 报告\n\n## 1. 概述\n\n纯文案需求。\n")
         self.assertNotIn("L10", _rules(findings))
 
+    def test_exempt_declaration_downgrades_to_minor(self):
+        """豁免通道：显式声明「无新增表，复用旧表」→ 降 MINOR 留蓝军复核，不 CRITICAL。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 7. 数据模型\n\n无新增表，复用旧表 t_order（只读）。\n"
+        )
+        l10 = [(lv, d) for lv, r, d in findings if r == "L10"]
+        self.assertEqual(len(l10), 1)
+        self.assertEqual(l10[0][0], "MINOR")
+
+    def test_exempt_with_populated_sql_dir_silent(self):
+        """豁免词 + sql/ 有表 → L10 完全不报（矩阵非空，豁免无需触发）。"""
+        sql_dir = self.root / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "t.sql").write_text("CREATE TABLE `t_order` (id int);\n", "utf-8")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 7. 数据模型\n\n无新增表，复用旧表 t_order。\n"
+            "读取：SELECT t_order 状态\n"
+        )
+        self.assertNotIn("L10", _rules(findings))
+
 
 class L11ComplexEdgeTagTests(LintTestBase):
     """错题 2026-08-12（红军复盘·提现确认）：frontmatter 自称 complex，

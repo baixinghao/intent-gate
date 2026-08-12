@@ -60,6 +60,9 @@ L7_LOG_Q_RE = r"^## Q(\d+)"
 L7_MAP_ROW_RE = r"\s*\|\s*Q?(\d+)"
 L11_COMPLEX_RE = r"^complexity:\s*complex\s*$"  # frontmatter 自称 complex 才启用打标强校验；simple/medium 不误伤
 L12_ANCHOR_RE = r"§|BR-\d+"  # 映射表落点列的可机检锚点形态（§x.y 或 BR-n）；纯散文 L4 无从校验
+# L10 豁免通道：无表需求/复用旧表是正当场景，但必须显式声明留痕（蓝军复核），
+# 偷偷不写才 CRITICAL——门禁逼的是表态，不是逼建表
+L10_EXEMPT_RE = r"无新增表|无表变更|无需建表|复用旧表|复用现有表|沿用旧表|不涉及(新增)?表|无\s*DDL\s*变更"
 # 建表语句形态（表名+开括号）才算内嵌 DDL；散文提及「CREATE TABLE 语句…」不误伤
 L9_EMBED_DDL_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?\w+`?\s*\("
 L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook §3.4 要求的格式）；\b 锚定防 sqlite/、mysql/ 误报
@@ -215,12 +218,21 @@ def lint(summary_path: Path):
 
     # ---- L10 空矩阵②兜底（错题集 2026-08-12）----
     # playbook Step 2：数据模型强制输出 sql/{表名}.sql。声明了「数据模型」章节
-    # 却没有任何 sql/*.sql 建表（矩阵②为空）= 存在性强制，与 L9 一致性检查互补
+    # 却没有任何 sql/*.sql 建表（矩阵②为空）= 存在性强制，与 L9 一致性检查互补。
+    # 豁免通道：无表需求/复用旧表须显式声明（L10_EXEMPT_RE）——声明降级 MINOR
+    # 留蓝军复核真伪；偷偷不写才 CRITICAL。
     if any("数据模型" in title for title in sections.values()) and not table_matrix:
-        findings.append(("CRITICAL", "L10",
-                         "报告含「数据模型」章节但表读写矩阵为空——未在 sql/ 产出任何 "
-                         "CREATE TABLE DDL（playbook §2/§3.4：无论复杂度，"
-                         "DDL 草案强制输出 sql/{表名}.sql）"))
+        exempt = re.search(L10_EXEMPT_RE, text)
+        if exempt:
+            findings.append(("MINOR", "L10",
+                             f"表读写矩阵为空，报告以「{exempt.group(0)}」豁免 DDL 产出——"
+                             "请人工确认豁免成立（确实无表变更/复用旧表）"))
+        else:
+            findings.append(("CRITICAL", "L10",
+                             "报告含「数据模型」章节但表读写矩阵为空——未在 sql/ 产出任何 "
+                             "CREATE TABLE DDL，且未声明无表变更/复用旧表"
+                             "（playbook §2/§3.4：DDL 草案强制输出 sql/{表名}.sql；"
+                             "确无表需求须在数据模型章节显式声明）"))
 
     # ---- L7 映射行 vs 日志 Q 覆盖 ----
     log_path = summary_path.parent / "_review" / "alignment-log.md"
@@ -287,7 +299,8 @@ def _contract_text() -> list[str]:
         f"- **L9 SQL 登记检查**：出现 `{L9_SQL_REF_RE}`（相对路径登记）时，sql/ 目录必须"
         "存在且含 .sql 文件，否则 CRITICAL（目录定位同 L6）",
         "- **L10 空矩阵②兜底**：存在「数据模型」章节但表读写矩阵为空 → CRITICAL"
-        "（存在性强制：DDL 草案必须落 sql/，与 L9 一致性检查互补）",
+        "（存在性强制：DDL 草案必须落 sql/，与 L9 一致性检查互补）。"
+        f"豁免：命中 `{L10_EXEMPT_RE}`（显式声明无表变更/复用旧表）→ 降 MINOR，蓝军复核",
         f"- **L11 complex 打标强校验**：frontmatter 命中 `{L11_COMPLEX_RE}` 时，"
         "状态机每条边 label 必须含 (技术动作)，裸边 CRITICAL；simple/medium 不启用",
         f"- **L12 锚点纯散文**：映射表数据行无一行含 `{L12_ANCHOR_RE}` 锚点 → MAJOR"
