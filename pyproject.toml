@@ -1,6 +1,6 @@
 [project]
 name = "intent-gate-mcp"
-version = "0.7.0"
+version = "0.8.0"
 description = "Lightweight intent-alignment plugin for coding agents: requirement-analysis playbook, three-level intent funnel with file-in-the-loop persistence, optional red-blue review skill (DingTalk group channel lives in the intent-gate-service sister service)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -48,8 +48,12 @@ packages = ["src/intent_gate"]
 # using-intent-gate 纪律文本的单一事实源在 skills/；wheel 经 force-include 携带，
 # 供 `intent-gate hook session-start`（install --target 的配套）在无插件目录的
 # agent（Cursor/Codex…）里读取。禁止在包内手抄第二份。
+# DSH 安装器（install --target dsh）从这些 _assets 读 skill 文本，
+# 复制到 $DSH_HOME/skills/ 供 DeepSeek Harness 的 skill 发现机制加载。
 [tool.hatch.build.targets.wheel.force-include]
 "skills/using-intent-gate/SKILL.md" = "intent_gate/_assets/using-intent-gate.SKILL.md"
+# DSH 安装器按 _assets/skills/<name>/SKILL.md 布局读取；整目录映射一次携带全部 skill
+"skills" = "intent_gate/_assets/skills"
 
 [tool.ruff]
 line-length = 100

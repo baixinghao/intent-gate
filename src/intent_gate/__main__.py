@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     hook_p.add_argument("--format", choices=["cursor", "claude", "standard"],
                         default="standard")
 
-    for name, helptext in (("install", "把 session-start 纪律注入接进 agent 的 hooks 配置"),
+    for name, helptext in (("install", "把 intent-gate 接进 agent 配置（cursor/codex hooks，或 dsh 的 cordis.patch.yml + skills）"),
                            ("uninstall", "拆除 install --target 接的线（只拆自己的）")):
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("--target", required=True, choices=SUPPORTED_TARGETS)
@@ -89,7 +89,23 @@ async def _run(args: argparse.Namespace) -> None:
         await mcp.run_sse_async()
 
 
+def _force_utf8_stdio() -> None:
+    """Windows GBK 控制台下 emoji 输出会崩（UnicodeEncodeError: 'gbk' codec...）。
+
+    hook 注入文本与 install/uninstall 的 JSON 都可能含 emoji（skill 文本的 📋 等）；
+    消费方（Claude Code hook / 终端 / 重定向）按 UTF-8 读 JSON，强制 UTF-8 输出
+    同时修掉崩溃与潜在乱码。MCP stdio 走二进制管道，不经过 text 层，不受影响。
+    任何失败（流已关闭/不支持 reconfigure）静默降级为原行为，不改变既有功能。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main() -> None:
+    _force_utf8_stdio()
     args = parse_args()
     if args.cmd == "hook":
         print(emit_session_start(args.format))

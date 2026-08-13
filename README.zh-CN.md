@@ -287,6 +287,7 @@ claude plugin install intent-gate@baixinghao-plugins
 | 宿主 | 状态 |
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
+| DeepSeek Harness（`install --target dsh`） | ✅ 已验证——MCP 工具经 `dsh-mcp-client` 桥接（13 个工具握手实测）+ skills 热加载进 `$DSH_HOME/skills`；安装器合并/幂等逻辑有单元测试 |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
@@ -356,6 +357,27 @@ intent-gate install --target cursor   # 写入 ~/.cursor/hooks.json
 intent-gate install --target codex    # 追加到 ~/.codex/config.toml
 ```
 
+**DeepSeek Harness（DSH）**：三条命令、零手工配置——安装器把 `dsh-mcp-client`
+插件实例写进每个 profile 的 `cordis.patch.yml`（只合并不覆盖、幂等，
+`uninstall --target dsh` 只拆自己接的线），并把 5 个 skills 复制到
+`$DSH_HOME/skills/` 供 DSH 的 skill 热加载：
+
+```bash
+pipx install intent-gate-mcp           # 1) 装 server（或 uv tool install intent-gate-mcp）
+intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + skills 复制
+# 3) 重启 DSH 会话：工具以 mcp__intent-gate__<tool> 出现，
+#    skills 从 $DSH_HOME/skills 热加载，账本落在 {工作区}/.harness/requests/
+```
+
+两个 DSH 专属说明：
+
+- DSH 的 `dsh-mcp-client` 只桥接 MCP **工具**、不桥接 MCP **prompt**，
+  所以 playbook 以 `doc-analysis-playbook` skill 形式一并安装
+  （同一份文本，全文携带，末尾标注权威来源）——开工前先完整读一遍；
+- 尊重 `DSH_HOME` 环境变量；profile 通过扫描
+  `$DSH_HOME/profiles/*/cordis.patch.yml` 自动发现。patch 模板
+  （注释 + `[]`）整体替换，用户已有条目原样保留。
+
 不管哪个客户端，开局先让 agent 完整读一遍 MCP prompt
 `doc_analysis_playbook`——它是法律，随 server 分发，不依赖任何插件。
 （客户端不支持 MCP prompt 的，让 agent 直接读
@@ -369,7 +391,7 @@ intent-gate install --target codex    # 追加到 ~/.codex/config.toml
 ## 备注
 
 - **文档解析边界**：只支持 .docx；`.doc` 老格式 / `.pdf` / `.xlsx` 等二进制请先转文本（Word「另存为 → .docx 或 纯文本(.txt)」，PDF 导出/另存为文本）
-- MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制**——其他客户端只有 server 一半
+- MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制，DSH 经 `install --target dsh` 获得全量支持（工具 + skills）**——其他客户端只有 server 一半
 - 账本写在 `{workspace_root}/.harness/requests/` 下，会被 git 跟踪——介意入库请加 `.gitignore`
 
 ## 开发（克隆仓库）

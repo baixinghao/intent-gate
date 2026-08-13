@@ -282,7 +282,7 @@ reference source.
 | Python | ≥ 3.11 | [python.org](https://www.python.org/downloads/); pipx/uv manage an isolated environment |
 | Package manager | `pipx` or `uv` | [Install pipx](https://pipx.pypa.io/stable/installation/) / [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
 | OS | Windows / macOS / Linux | On Windows, the plugin's SessionStart injection needs [Git Bash](https://gitforwindows.org/) (skipped silently when missing; everything else keeps working) |
-| MCP client | Any MCP-capable client | Claude Code / Cursor / VS Code etc.; the skills/hooks plugin form is currently Claude Code-specific |
+| MCP client | Any MCP-capable client | Claude Code / Cursor / VS Code / DeepSeek Harness etc.; full plugin support (skills/hooks) is Claude Code + DeepSeek Harness (`install --target dsh`) |
 
 **Dependencies** (installed automatically — nothing manual):
 
@@ -334,12 +334,14 @@ Every variable has a default — **zero config to use**; copy `.env.example` to 
 | Host | Status |
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
+| DeepSeek Harness（`install --target dsh`） | ✅ Verified——MCP tools via `dsh-mcp-client` (13 tools handshake-tested) + skills hot-loading into `$DSH_HOME/skills`; installer merge/idempotency unit-tested |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
 The enforcement half — tools, question ledger, lint gates, and the
 `doc_analysis_playbook` prompt — is plain MCP and works in any client that
-supports MCP prompts. Only the skills/hooks half is Claude Code-specific.
+supports MCP prompts. The skills/hooks half is Claude Code-specific; DSH gets
+the full surface (tools + skills) through `install --target dsh`.
 
 After step 1 (`pipx`/`uv tool install intent-gate-mcp`), register one way:
 
@@ -405,6 +407,30 @@ intent-gate install --target cursor   # writes ~/.cursor/hooks.json
 intent-gate install --target codex    # appends to ~/.codex/config.toml
 ```
 
+**DeepSeek Harness (DSH):** three commands, zero manual config — the
+installer writes a `dsh-mcp-client` plugin instance into every profile's
+`cordis.patch.yml` (merge-only, idempotent, `uninstall --target dsh` reverts
+exactly what install added) and copies the five skills into
+`$DSH_HOME/skills/` for DSH's skill hot-loading:
+
+```bash
+pipx install intent-gate-mcp           # 1) install the server (or: uv tool install intent-gate-mcp)
+intent-gate install --target dsh       # 2) wire the harness — patch merge + skills copy
+# 3) restart the DSH session: tools appear as mcp__intent-gate__<tool>,
+#    skills hot-load from $DSH_HOME/skills, the question ledger lands in
+#    {workspace}/.harness/requests/
+```
+
+Two DSH-specific notes:
+
+- DSH's `dsh-mcp-client` bridges MCP **tools** but not MCP **prompts**, so
+  the playbook is installed as the `doc-analysis-playbook` skill (same text,
+  full content, authoritative source annotated at the end) — read it in full
+  at the start of any requirement analysis.
+- `DSH_HOME` is respected when set; profiles are auto-detected by scanning
+  `$DSH_HOME/profiles/*/cordis.patch.yml`. A patch template (comment + `[]`)
+  is fully replaced, user patch entries are preserved.
+
 Whatever the client, start by asking the agent to read the MCP prompt
 `doc_analysis_playbook` in full — it is the law, and it ships with the
 server, not with any plugin. (Clients without MCP-prompt support can point
@@ -419,7 +445,7 @@ chat dialog as fallback).
 ## Notes
 
 - **Document-parsing boundary**: .docx only; `.doc` legacy / `.pdf` / `.xlsx` and other binaries must be converted first (Word「Save As → .docx or Plain Text (.txt)」, PDF export/save-as text)
-- The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is currently Claude Code-specific** — other clients get the server half only
+- The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is Claude Code-specific; DeepSeek Harness gets the full surface via `install --target dsh`** — other clients get the server half only
 - The ledger lives under `{workspace_root}/.harness/requests/` and is tracked by git — add a `.gitignore` entry if you don't want it committed
 
 ## Development (from a clone)
