@@ -34,6 +34,13 @@
   L13 图内占位符残留 ???/TBDn（CRITICAL。占位只允许被代码实证或人类拍板消除，
       禁止猜测填空；先于边解析全文扫描 mermaid 块——裸 ??? 边字符集不收会被静默吃掉）
   L13b 草稿图占位仍在但待决清单无在飞题（MINOR，单方向防漏发题）
+  L14 入口态失败出边（MAJOR。错题集 2026-08-14 LOADING 案：入口态只画成功边，
+      资方匹配失败去向漏画——playbook 失败边四类必查的机械半边；
+      图内显式统一兜底注释 → 降 MINOR。门禁逼表态，不逼画边）
+  L15 DDL 状态枚举 vs 状态机一致性（MAJOR。同案：routing_status 枚举含 FAILED
+      而状态机没画——实现层想到、图里漏画，产物自相矛盾。含别名解析
+      state "…" as X / X : 描述 / 散文 X=ENUM；显式声明非生命周期字段 → 降 MINOR；
+      无状态机不启用）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -73,6 +80,45 @@ L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook �
 #   state "???待确认" as TBDn（节点）/ --> TBDn（边）——TBDn 命中 [\w一-鿿]+ 字符集，
 #   边解析零噪音；裸 ??? 仅作兼容扫描（字符集不含 ?，裸 ??? 边会被静默吃掉）。
 PLACEHOLDER_RE = r"\?\?\?|TBD\d+"
+# L14 失败语义词表：入口态出边的 label/目标态/别名命中其一即算「画了失败路径」
+L14_FAIL_RE = r"失败|异常|超时|回滚|拒绝|错误|失效|无效|FAILED|TERMINATE|ERROR|INVALID|FAIL"
+# L14 豁免通道：确有全局兜底须图内显式注释留痕（蓝军复核），偷偷不画才 MAJOR
+L14_EXEMPT_RE = r"统一兜底|全局兜底|失败路径统一|失败统一处理|异常统一兜底"
+# L15 状态枚举：列 COMMENT 含「状态」字样才扫（费用类型等非状态枚举不误伤），
+# 枚举组形态为斜杠分隔的大写下划线词
+L15_ENUM_RE = r"[A-Z][A-Z0-9_]+(?:/[A-Z][A-Z0-9_]+)+"
+L15_COLUMN_RE = r"^\s*(\w+)\s+\w+(?:\([^)]*\))?[^\n]*?COMMENT\s*'([^']*)'"
+# L15 豁免通道：字段确非生命周期（如路由过程字段）须在报告显式声明 → 降 MINOR
+L15_EXEMPT_RE = r"非生命周期|过程字段|不入状态机|非状态机字段|非状态机"
+
+
+def _state_aliases(blocks, text):
+    """状态名别名表：ID → 别名集合（调用侧统一 upper 比较）。
+
+    错题集 2026-08-14：L15 必须把「已完成=FINISHED」这类业务态别名解析出来，
+    否则 DDL 枚举 vs 状态机一致性检查对中文业务态集体误报。三条通道：
+      1. mermaid 声明 `state "描述" as ID`
+      2. mermaid 描述行 `ID : 描述`（stateDiagram 块内、非边行）
+      3. 散文显式等式 `ID=ENUM`（如「已完成=FINISHED」，仅收 CJK 起头 ID）
+    """
+    alias = {}
+    decl_re = re.compile(r'state\s+"([^"]+)"\s+as\s+([\w一-鿿]+)')
+    desc_re = re.compile(r"^[ \t]*([\w一-鿿]+)[ \t]*:[ \t]*(\S.*)$")
+    prose_re = re.compile(r"([一-鿿][\w一-鿿]*)\s*[=＝]\s*([A-Z][A-Z0-9_]{2,})")
+    for b in blocks:
+        if "stateDiagram" not in b:
+            continue
+        for m in decl_re.finditer(b):
+            alias.setdefault(m.group(2), set()).add(m.group(1))
+        for ln in b.split("\n"):
+            if "-->" in ln:
+                continue
+            m = desc_re.match(ln)
+            if m:
+                alias.setdefault(m.group(1), set()).add(m.group(2).strip())
+    for m in prose_re.finditer(text):
+        alias.setdefault(m.group(1), set()).add(m.group(2))
+    return alias
 
 
 def lint(summary_path: Path):
@@ -160,6 +206,33 @@ def lint(summary_path: Path):
                                  f"complexity: complex 但 {len(bare)} 条状态机边缺 (技术动作) 打标"
                                  f"（如 {', '.join(bare[:3])}{'…' if len(bare) > 3 else ''}）——"
                                  "每条边必须 触发动作 (技术动作1, 技术动作2)"))
+
+        # L14（错题集 2026-08-14 LOADING 案）：入口态（[*] --> X 的 X）是流程第一张
+        # 多米诺，外部依赖失败/超时/非法输入/前置不满足的失败路径最容易在此画漏。
+        # 入口态出边集合（不含自环）无一条失败语义边 → MAJOR；图内显式注释统一
+        # 兜底 → 降 MINOR（门禁逼表态，不逼画边——确有全局兜底声明即合法）。
+        aliases = _state_aliases(blocks, text)
+        entries = {t for s, t, _, _ in edges if s == "[*]"}
+        for ent in sorted(entries):
+            outs = [(t, ev, act) for s, t, ev, act in edges if s == ent and t != ent]
+            if not outs:
+                continue  # 死入口归 L2 管，不重复报案
+            fail_hit = any(
+                re.search(L14_FAIL_RE,
+                          f"{ev} {act} {t} {' '.join(aliases.get(t, ()))}", re.I)
+                for t, ev, act in outs)
+            if fail_hit:
+                continue
+            if any(re.search(L14_EXEMPT_RE, b) for b in blocks if "stateDiagram" in b):
+                findings.append(("MINOR", "L14",
+                                 f"入口态 {ent} 无失败语义出边，图内已声明统一兜底——"
+                                 "请人工确认兜底声明成立（蓝军复核）"))
+            else:
+                findings.append(("MAJOR", "L14",
+                                 f"入口态 {ent} 的出边集合无失败语义边"
+                                 f"（词表：{L14_FAIL_RE}）——失败边四类必查："
+                                 "外部依赖失败/超时/非法输入/前置不满足；"
+                                 "确由全局兜底须在 stateDiagram 块内显式注释"))
 
     # ---- 章节 ----
     sections = {}
@@ -304,6 +377,40 @@ def lint(summary_path: Path):
                          "DDL 未按 playbook §2/§3.4 落到项目根 sql/（定位目录："
                          f"{sql_dir}）"))
 
+    # ---- L15 DDL 状态枚举 vs 状态机一致性（MAJOR，错题集 2026-08-14）----
+    # routing_status 案：DDL 注释写了 PROCESSING/SUCCESS/FAILED，状态机却没画
+    # FAILED——实现层想到、图里漏画，产物自相矛盾。枚举值必须在状态机状态集
+    # （含 _state_aliases 别名：state "..." as X / X : 描述 / 散文 X=ENUM）中出现。
+    # 豁免：报告显式声明该字段非生命周期（L15_EXEMPT_RE）→ 降 MINOR。
+    # 无状态机不启用（没图谈何一致）；注释无「状态」字样的列不扫（不误伤普通枚举）。
+    if edges:
+        known = {s.upper() for s in states}
+        for toks in aliases.values():
+            known |= {t.upper() for t in toks}
+        for sql in sorted(sql_dir.glob("*.sql")) if sql_dir.exists() else []:
+            for ln in sql.read_text(encoding="utf-8").split("\n"):
+                cm = re.match(L15_COLUMN_RE, ln, re.I)
+                if not cm or "状态" not in cm.group(2):
+                    continue
+                field = cm.group(1)
+                for grp in re.findall(L15_ENUM_RE, cm.group(2)):
+                    missing = [v for v in grp.split("/") if v.upper() not in known]
+                    if not missing:
+                        continue
+                    exempt = re.search(
+                        rf"{re.escape(field)}[^\n]{{0,40}}(?:{L15_EXEMPT_RE})", text)
+                    if exempt:
+                        findings.append(("MINOR", "L15",
+                                         f"{sql.name} 字段 {field} 枚举 {', '.join(missing)} "
+                                         "不在状态机中，报告已声明非生命周期字段——"
+                                         "请人工确认声明成立（蓝军复核）"))
+                    else:
+                        findings.append(("MAJOR", "L15",
+                                         f"{sql.name} 字段 {field} 枚举值 "
+                                         f"{', '.join(missing)} 在状态机中无对应状态/别名"
+                                         "——实现层想到、图里漏画，图与 DDL 必须一致；"
+                                         "确为非生命周期字段须在报告显式声明"))
+
     return findings, edges, table_matrix, anchors, sections
 
 
@@ -345,6 +452,13 @@ def _contract_text() -> list[str]:
         "占位只允许被代码实证或人类拍板消除，禁止猜测填空）",
         "- **L13b 草稿占位无在飞题**：草稿图内有占位但待决清单无 `- [ ]` 题 → MINOR"
         "（单方向，防\"有断层却没发题\"；散文中的 TBD 引用不算占位）",
+        f"- **L14 入口态失败出边**：`[*] --> X` 的入口态 X，出边集合（不含自环）"
+        f"无一条失败语义边（label/目标态/别名命中 `{L14_FAIL_RE}`）→ MAJOR。"
+        f"豁免：stateDiagram 块内显式注释 `{L14_EXEMPT_RE}` → 降 MINOR，蓝军复核",
+        "- **L15 DDL 状态枚举 vs 状态机**：sql/*.sql 列 COMMENT 含「状态」的枚举组"
+        f"（``{L15_ENUM_RE}``），枚举值须在状态机状态集或别名"
+        "（`state \"...\" as X` / `X : 描述` / 散文 `X=ENUM`）中出现 → MAJOR。"
+        f"豁免：报告显式声明该字段 `{L15_EXEMPT_RE}` → 降 MINOR；无状态机不启用",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -358,7 +472,7 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L13 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L15 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:

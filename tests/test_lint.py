@@ -583,5 +583,163 @@ class L13bDraftPlaceholderTests(LintTestBase):
         self.assertNotIn("L13b", _rules(findings))
 
 
+class L14EntryFailEdgeTests(LintTestBase):
+    """L14（MAJOR，错题集 2026-08-14 LOADING 案）：入口态（[*] --> X 的 X）
+    出边集合无一条失败语义边 → MAJOR；图内显式统一兜底注释 → 降 MINOR。
+    门禁逼表态，不逼画边——误伤面必须压零。"""
+
+    HEAD = "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+    TAIL = "```\n"
+
+    def test_entry_without_fail_edge_major(self):
+        """阳性·LOADING 案：入口态只有成功边（资方匹配失败去向漏画）→ L14 MAJOR。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    [*] --> LOADING: 发起 (IF校验)\n"
+            + "    LOADING --> WAIT_CONFIRM: 路由成功 (DB_INSERT)\n"
+            + "    WAIT_CONFIRM --> 已完成: 提交 (DB_UPDATE)\n"
+            + "    已完成 --> [*]: 完结\n"
+            + self.TAIL
+        )
+        l14 = [(lv, d) for lv, r, d in findings if r == "L14"]
+        self.assertEqual(len(l14), 1, f"L14 未抓入口态画漏: {findings}")
+        self.assertEqual(l14[0][0], "MAJOR")
+        self.assertIn("LOADING", l14[0][1])
+
+    def test_entry_with_fail_edge_silent(self):
+        """阴性：入口态有 --> FAILED 失败边，不报。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    [*] --> LOADING: 发起 (IF校验)\n"
+            + "    LOADING --> WAIT_CONFIRM: 路由成功 (DB_INSERT)\n"
+            + "    LOADING --> FAILED: 路由失败 (DB_UPDATE)\n"
+            + "    WAIT_CONFIRM --> 已完成: 提交 (DB_UPDATE)\n"
+            + "    已完成 --> [*]: 完结\n"
+            + "    FAILED --> [*]: 终止\n"
+            + self.TAIL
+        )
+        self.assertNotIn("L14", _rules(findings))
+
+    def test_fail_edge_via_prose_alias_silent(self):
+        """阴性·别名通道：LOADING --> 已失效 + 散文「已失效=INVALID」
+        → 目标态别名命中失败词表，不报。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    [*] --> LOADING: 发起 (IF校验)\n"
+            + "    LOADING --> WAIT_CONFIRM: 路由成功 (DB_INSERT)\n"
+            + "    LOADING --> 已失效: 路由失败 (DB_UPDATE)\n"
+            + "    WAIT_CONFIRM --> 已完成: 提交 (DB_UPDATE)\n"
+            + "    已完成 --> [*]: 完结\n"
+            + "    已失效 --> [*]: 终止\n"
+            + self.TAIL
+            + "\n> 状态语义：已失效=INVALID。\n"
+        )
+        self.assertNotIn("L14", _rules(findings))
+
+    def test_global_fallback_note_downgrades_minor(self):
+        """豁免：无失败边但图内注释「失败统一兜底」→ MINOR 而非 MAJOR。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    [*] --> DRAFT: 发起 (IF校验)\n"
+            + "    DRAFT --> SUCCESS: 提交 (DB_INSERT)\n"
+            + "    SUCCESS --> [*]: 完结\n"
+            + "    note right of DRAFT: 失败统一兜底由全局异常处理器承担\n"
+            + self.TAIL
+        )
+        l14 = [(lv, d) for lv, r, d in findings if r == "L14"]
+        self.assertEqual(len(l14), 1)
+        self.assertEqual(l14[0][0], "MINOR")
+
+    def test_no_entry_edge_not_fired(self):
+        """防误伤：无 [*] --> 入口边的图（片段/纯内部流转）不启用本规则。"""
+        findings, *_ = self.run_lint(
+            self.HEAD
+            + "    DRAFT --> SUCCESS: 直达\n"
+            + self.TAIL
+        )
+        self.assertNotIn("L14", _rules(findings))
+
+
+class L15DdlEnumConsistencyTests(LintTestBase):
+    """L15（MAJOR，错题集 2026-08-14 routing_status 案）：DDL 列注释中的
+    状态枚举值必须在状态机状态集/别名中出现——实现层想到、图里漏画
+    = 产物自相矛盾。含别名解析；显式声明非生命周期字段 → 降 MINOR。"""
+
+    MACHINE = (
+        "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+        "    [*] --> LOADING: 发起 (IF校验)\n"
+        "    LOADING --> WAIT_CONFIRM: 路由成功 (DB_INSERT)\n"
+        "    LOADING --> INVALID: 路由失败 (DB_UPDATE)\n"
+        "    WAIT_CONFIRM --> PROCESSING: 提交 (DB_UPDATE)\n"
+        "    PROCESSING --> 已完成: 渠道完成 (DB_UPDATE)\n"
+        "    PROCESSING --> TERMINATE: 推进失败 (DB_UPDATE)\n"
+        "    已完成 --> [*]: 完结\n"
+        "    TERMINATE --> [*]: 终止\n"
+        "    INVALID --> [*]: 失效\n"
+        "```\n"
+    )
+
+    def write_sql(self, body: str, name: str = "t_sign_order.sql"):
+        d = self.root / "sql"
+        d.mkdir(exist_ok=True)
+        (d / name).write_text(body, encoding="utf-8")
+
+    ROUTING_SQL = (
+        "CREATE TABLE t_sign_order (\n"
+        "    id BIGINT NOT NULL AUTO_INCREMENT,\n"
+        "    routing_status VARCHAR(32) DEFAULT NULL COMMENT '路由状态 PROCESSING/FAILED',\n"
+        "    PRIMARY KEY (id)\n"
+        ") ENGINE=InnoDB;\n"
+    )
+
+    def test_enum_missing_from_machine_major(self):
+        """阳性·routing_status 案：枚举 FAILED 不在状态机状态集中 → L15 MAJOR。"""
+        self.write_sql(self.ROUTING_SQL)
+        findings, *_ = self.run_lint(self.MACHINE)
+        l15 = [(lv, d) for lv, r, d in findings if r == "L15"]
+        self.assertEqual(len(l15), 1, f"L15 未抓枚举漏画: {findings}")
+        self.assertEqual(l15[0][0], "MAJOR")
+        self.assertIn("routing_status", l15[0][1])
+        self.assertIn("FAILED", l15[0][1])
+
+    def test_enum_covered_via_prose_alias_silent(self):
+        """阴性·今日真实案：withdraw_status 四值中 FINISHED 由散文别名
+        「已完成=FINISHED」解析覆盖 → 全枚举有机落点，不报。"""
+        self.write_sql(
+            "CREATE TABLE t_sign_order (\n"
+            "    withdraw_status VARCHAR(32) NOT NULL COMMENT '提现状态 PROCESSING/FINISHED/TERMINATE/INVALID',\n"
+            "    PRIMARY KEY (id)\n"
+            ") ENGINE=InnoDB;\n"
+        )
+        findings, *_ = self.run_lint(
+            self.MACHINE + "\n> 状态语义：已完成=FINISHED。\n")
+        self.assertNotIn("L15", _rules(findings))
+
+    def test_non_lifecycle_declaration_downgrades_minor(self):
+        """豁免：枚举缺失但报告显式声明「过程字段，不入状态机」→ MINOR。"""
+        self.write_sql(self.ROUTING_SQL)
+        findings, *_ = self.run_lint(
+            self.MACHINE + "\n> routing_status 为过程字段，不入状态机。\n")
+        l15 = [(lv, d) for lv, r, d in findings if r == "L15"]
+        self.assertEqual(len(l15), 1)
+        self.assertEqual(l15[0][0], "MINOR")
+
+    def test_no_state_machine_not_fired(self):
+        """防误伤：无状态机（没图谈何一致）不启用本规则。"""
+        self.write_sql(self.ROUTING_SQL)
+        findings, *_ = self.run_lint("# 报告\n\n纯文本报告，无图。\n")
+        self.assertNotIn("L15", _rules(findings))
+
+    def test_non_status_comment_not_scanned(self):
+        """防误伤：注释无「状态」字样的枚举列（费用类型等）不扫。"""
+        self.write_sql(
+            "CREATE TABLE t_pre_cost (\n"
+            "    fee_type VARCHAR(32) DEFAULT NULL COMMENT '费用类型 COMMON/OTHER',\n"
+            "    PRIMARY KEY (id)\n"
+            ") ENGINE=InnoDB;\n", name="t_pre_cost.sql")
+        findings, *_ = self.run_lint(self.MACHINE)
+        self.assertNotIn("L15", _rules(findings))
+
+
 if __name__ == "__main__":
     unittest.main()
