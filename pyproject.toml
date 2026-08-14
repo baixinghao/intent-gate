@@ -1,6 +1,6 @@
 [project]
 name = "intent-gate-mcp"
-version = "0.8.0"
+version = "0.9.0"
 description = "Lightweight intent-alignment plugin for coding agents: requirement-analysis playbook, three-level intent funnel with file-in-the-loop persistence, optional red-blue review skill (DingTalk group channel lives in the intent-gate-service sister service)"
 readme = "README.md"
 requires-python = ">=3.11"
