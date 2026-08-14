@@ -900,5 +900,115 @@ class L20TbdResolutionTests(LintTestBase):
         self.assertNotIn("L20", _rules(findings))
 
 
+class L21GraphEvolutionTests(LintTestBase):
+    """L21（MAJOR）：summary 状态机每个状态 id 必须能在 draft 的 stateDiagram
+    内容中找到（边端点/别名/描述声明）——凭空新增结构须能指回 alignment-log
+    核销记录（图演化纪律的机械半边）。"""
+
+    def write_draft(self, text: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(text, encoding="utf-8")
+
+    SUMMARY = (
+        "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+        "    DRAFT --> SUCCESS: 直达\n"
+        "    DRAFT --> EXTRA: 新增分支\n"
+        "    SUCCESS --> [*]\n"
+        "    EXTRA --> [*]\n```\n"
+    )
+
+    def test_state_missing_from_draft_major(self):
+        """阳性：summary 的 EXTRA 未出现在 draft 状态机 → L21 MAJOR。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n")
+        findings, *_ = self.run_lint(self.SUMMARY)
+        l21 = [(lv, d) for lv, r, d in findings if r == "L21"]
+        self.assertEqual(len(l21), 1, f"L21 未抓凭空新增状态: {findings}")
+        self.assertEqual(l21[0][0], "MAJOR")
+        self.assertIn("EXTRA", l21[0][1])
+
+    def test_all_states_in_draft_silent(self):
+        """阴性：summary 状态全部能在 draft 找到 → 不报。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n"
+            "    DRAFT --> SUCCESS: 直达\n"
+            "    DRAFT --> EXTRA: 新增分支\n```\n")
+        findings, *_ = self.run_lint(self.SUMMARY)
+        self.assertNotIn("L21", _rules(findings))
+
+    def test_state_via_alias_declaration_silent(self):
+        """阴性·别名通道：draft 里 state \"...\" as EXTRA 声明也算出现过。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n"
+            "    DRAFT --> SUCCESS: 直达\n"
+            "    state \"新增分支\" as EXTRA\n```\n")
+        findings, *_ = self.run_lint(self.SUMMARY)
+        self.assertNotIn("L21", _rules(findings))
+
+    def test_no_draft_not_fired(self):
+        """豁免：无 draft 不启用。"""
+        findings, *_ = self.run_lint(self.SUMMARY)
+        self.assertNotIn("L21", _rules(findings))
+
+    def test_no_diagram_declaration_exempt(self):
+        """豁免：draft 显式声明「无需画图」（词表单源 models.DRAFT_NO_DIAGRAM_RE）。"""
+        self.write_draft("# 草稿\n\n无需画图：纯文案需求，不触发任何图。\n")
+        findings, *_ = self.run_lint(self.SUMMARY)
+        self.assertNotIn("L21", _rules(findings))
+
+    def test_draft_tbd_placeholder_not_a_state(self):
+        """draft 里的 TBDn 占位不算状态：summary 状态仍须指回真实草稿状态。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n"
+            "    DRAFT --> SUCCESS: 直达\n"
+            "    DRAFT --> TBD1: 去向待决\n```\n")
+        findings, *_ = self.run_lint(self.SUMMARY)
+        l21 = [(lv, d) for lv, r, d in findings if r == "L21"]
+        self.assertEqual(len(l21), 1)
+        self.assertIn("EXTRA", l21[0][1])
+
+
+class L22ReflowCircuitBreakerTests(LintTestBase):
+    """L22（CRITICAL）：reflow_round 超 reflow_budget（缺省 2）且 alignment-log
+    无 ESCALATE 人类裁决留痕 → 回流熔断兜底。"""
+
+    def write_draft(self, frontmatter: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(
+            f"---\n{frontmatter}---\n\n# 草稿\n", encoding="utf-8")
+
+    def write_log(self, text: str):
+        (self.root / "_review" / "alignment-log.md").write_text(text, encoding="utf-8")
+
+    def test_round_over_budget_without_escalate_critical(self):
+        """阳性：reflow_round=3（budget 缺省 2）且无 ESCALATE 留痕 → CRITICAL。"""
+        self.write_draft("feature: t\nreflow_round: 3\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        l22 = [(lv, d) for lv, r, d in findings if r == "L22"]
+        self.assertEqual(len(l22), 1, f"L22 未抓回流超限: {findings}")
+        self.assertEqual(l22[0][0], "CRITICAL")
+
+    def test_escalate_log_exempts(self):
+        """阴性：alignment-log 含 ESCALATE 人类裁决留痕 → 不报。"""
+        self.write_draft("feature: t\nreflow_round: 3\n")
+        self.write_log("# 流水\n\n## Q1 ESCALATE 裁决：人类授权提高预算\n- 落点：§1\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L22", _rules(findings))
+
+    def test_raised_budget_not_fired(self):
+        """阴性：人类手写提高 reflow_budget=4 后 round=3 不再超限 → 不报。"""
+        self.write_draft("feature: t\nreflow_round: 3\nreflow_budget: 4\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L22", _rules(findings))
+
+    def test_legacy_draft_without_reflow_round_not_fired(self):
+        """防误伤：旧现场 draft 无 reflow_round 字段 → 不报。"""
+        self.write_draft("feature: t\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L22", _rules(findings))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -240,12 +240,12 @@ def analyze_request(workspace_root: str | Path, feature: str, prd_path: str | No
     log_file = review_dir / "alignment-log.md"
 
     if pending_file.exists() or log_file.exists():
-        return _resume(feature, review_dir)
+        return _resume(workspace_root, feature, review_dir)
     return _fresh(workspace_root, feature, prd_path, review_dir)
 
 
 # ---------------------------------------------------------------- resume
-def _resume(feature: str, review_dir: Path) -> dict:
+def _resume(workspace_root: str | Path, feature: str, review_dir: Path) -> dict:
     """中断续跑：只认文件现场，不依赖任何 session 记忆。
 
     汇报：已答几题、还挂几题、推断几个未确认、draft 是否在、
@@ -304,6 +304,9 @@ def _resume(feature: str, review_dir: Path) -> dict:
     ready = not unanswered and not inf_pending and not inbox_new
     status = "blocked" if red_pending else ("pending_review" if ready else "draft")
 
+    # 相位机透出（对齐→生成→门禁→交付 的机械化判定，见 phase.py）
+    from ..phase import compute_phase
+
     return {
         "mode": "resume",
         "feature": feature,
@@ -324,6 +327,7 @@ def _resume(feature: str, review_dir: Path) -> dict:
             "note": "approved 只能由人类/评审授予，MCP 永不自授",
         },
         "next_actions": next_actions,
+        "phase": compute_phase(workspace_root, feature),
         "note": "续跑模式只读文件现场，未重新解析 PRD；原 PRD 仅作溯源参考",
     }
 
@@ -435,6 +439,7 @@ def _render_draft(feature: str, prd_path: str, pattern: dict, gaps: list[dict], 
         f"confidence: {gate['confidence']}",
         f"status: {gate['status']}",
         "intent_aligned: false",
+        "reflow_round: 0",
         "generated_by: intent-gate analysis engine（机械初筛信号，正式判断见宿主复核）",
         "---",
         "",
@@ -551,6 +556,7 @@ def record_analysis(
         f"confidence: {confidence}",
         f"status: {status}",
         "intent_aligned: false",
+        "reflow_round: 0",
         "generated_by: host agent（语义判断，record_analysis 落账）",
         "---",
         "",

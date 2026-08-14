@@ -8,6 +8,8 @@
     inference-pending.md   AI 推断待确认清单（批量点头用）
     inbox/                 群回复落盘区（钉钉回调写进来的答案原话）
         _consumed/         已被 collect_answers 领取的答案（归档，防重复领取）
+    analysis-draft.md      需求解析草稿（本层只读写其 frontmatter：reflow_round
+                           等相位机字段；正文由 analysis 引擎生成）
 
 纪律（对应 DESIGN.md §4）：
   - 先落盘后发送：任何群消息发出前，题目必须已经躺在 pending-questions.md 里。
@@ -92,6 +94,8 @@ class PendingQuestion:
     recommend: str = ""  # AI 推荐项 + 推断依据（点头式确认用），可空
     targets: list[str] = field(default_factory=list)  # 期望回答人（昵称展示用）
     issued_at: str = field(default_factory=_now)
+    coordinate: str = ""  # 图内坐标（如「状态机 X-->Y」「决策表 BR-01」），同坐标查重用
+    reflow_round_tag: int = 0  # 回流轮次号（0=非回流题；>0 渲染为「回流: Rn」）
 
 
 class ReviewStore:
@@ -127,6 +131,10 @@ class ReviewStore:
     def consumed_dir(self) -> Path:
         return self.inbox_dir / "_consumed"
 
+    @property
+    def draft_file(self) -> Path:
+        return self.review_dir / "analysis-draft.md"
+
     def _ensure(self) -> None:
         self.review_dir.mkdir(parents=True, exist_ok=True)
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -153,6 +161,11 @@ class ReviewStore:
         if q.targets:
             parts.append("@" + " @".join(_clean(t) for t in q.targets))
         parts.append(f"发出: {q.issued_at}")
+        # 新字段只往后追加（行格式纪律：不破坏既有解析）
+        if q.coordinate:
+            parts.append(f"坐标: {_clean(q.coordinate)}")
+        if q.reflow_round_tag:
+            parts.append(f"回流: R{q.reflow_round_tag}")
         with self.pending_file.open("a", encoding="utf-8") as f:
             f.write(" | ".join(parts) + "\n")
 
@@ -247,6 +260,49 @@ class ReviewStore:
         if count:
             _atomic_write(self.pending_file, "\n".join(lines) + "\n")
         return count
+
+    # ------------------------------------------------- draft frontmatter
+    def read_draft_meta(self) -> dict:
+        """解析 analysis-draft.md 的 frontmatter（--- 之间 key: value 行，
+        手工切分，不引 yaml 依赖）。draft 不存在或无 frontmatter 返回 {}。"""
+        if not self.draft_file.exists():
+            return {}
+        lines = self.draft_file.read_text(encoding="utf-8").splitlines()
+        if not lines or lines[0].strip() != "---":
+            return {}
+        meta = {}
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if ":" in line:
+                key, _, value = line.partition(":")
+                meta[key.strip()] = value.strip()
+        return meta
+
+    def update_draft_meta(self, **kv) -> None:
+        """原子更新 draft frontmatter：键存在则替换该行，不存在则插入闭合 --- 之前。
+        draft 不存在（或无 frontmatter 块）则静默跳过。"""
+        if not self.draft_file.exists():
+            return
+        lines = self.draft_file.read_text(encoding="utf-8").splitlines()
+        if not lines or lines[0].strip() != "---":
+            return
+        close = None
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                close = i
+                break
+        if close is None:
+            return
+        remaining = dict(kv)
+        for i in range(1, close):
+            key = lines[i].split(":", 1)[0].strip()
+            if key in remaining:
+                lines[i] = f"{key}: {remaining.pop(key)}"
+        for key, value in remaining.items():
+            lines.insert(close, f"{key}: {value}")
+            close += 1
+        _atomic_write(self.draft_file, "\n".join(lines) + "\n")
 
     # ------------------------------------------------------- alignment-log
     def append_alignment_log(

@@ -17,16 +17,44 @@
 > + analysis-draft.md 即完整工作现场。原始 PRD 仅作溯源参考。
 > 🔴 续跑加载顺序：`analyze_requirement` 返回的现场汇报 → alignment-log.md →（必要时）原始 PRD。
 
+### 0.0 相位机（complex 需求专用，由 MCP 机械驱动）
+
+流程不靠 agent 记忆执行——每个 MCP 动作返回的 `phase` 块直接给出当前相位与
+`next_action`，照它执行即可（透出位置：`analyze_requirement`（resume）、
+`list_pending_questions`、`resolve_question` 的返回）。
+
+| 相位 | 进入条件 | 该干什么 | 谁执行 |
+|------|---------|---------|--------|
+| `align` | 有未决题/未确认推断/inbox 未消费 | Step 0.5 意图对齐：发题、收答、核销 | 探测可下放子代理；交互必须在主对话层 |
+| `generate` | 对齐就绪且无 summary.md | 按 phase 块附带的 Phase B subagent 派工 brief **照抄派工**，生成 summary/DDL | 可下放子代理（Phase B） |
+| `gate` | summary.md 已存在但 lint 未归零 | `lint_summary` 机械自检，当场修正 | 主 session |
+| `deliverable` | lint CRITICAL 归零 | 交付 | 主 session |
+
+> 🔴 **复杂度门禁**：相位拆分只服务 complex 需求。simple/medium 不进相位机，
+> 继续单 session 顺序走完 Step 0-4（上下文小，不值得拆）。
+
 ## 0.1 上下文加载（进场纪律，来自 agent 定义）
 
 | 阶段 | 加载 | 用途 |
 |------|------|------|
 | 进场 | 本 playbook | 核心工作流 |
 | 进场 | 原始需求文档（PRD） | 分析输入（UTF-8 文本或 .docx；`.doc`/`.pdf` 等二进制先转文本再传路径） |
-| 分析前 | 项目红线文件（如 `.harness/rules/01_*.md`，**有则必读，无则跳过**） | §3.9 红线检查的对照基准 |
-| 分析前 | 项目术语/数据模型 wiki（**有则必读，无则按 §0.2 处理**） | 术语对齐、数据模型对照 |
+| 分析前 | 项目红线文件（如 `.harness/rules/01_*.md`，**有则必读——按 §0.1.1 摄入纪律先轮廓后取件，不是全文预读；无则跳过**） | §3.9 红线检查的对照基准 |
+| 分析前 | 项目术语/数据模型 wiki（**有则必读——按 §0.1.1 摄入纪律；无则按 §0.2 处理**） | 术语对齐、数据模型对照 |
 | 按需 | 模块 specs | §3.3 模块影响引用模块边界 |
 | 按需 | 代码检索（codegraph `search_graph`/`trace_path` 或 grep，**有则用**） | 验证需求提到的类/接口是否真实存在；🔧技术 gap 优先代码实证 |
+
+### 0.1.1 摄入纪律（先轮廓，后取件）
+
+🔴 面对项目中任何不确定材料，**禁止无脑全量读入**。读之前先回答
+「我要从这份材料里拿什么」——答不上来的材料不进上下文。
+
+| 材料类型 | 摄入降级链 |
+|---------|-----------|
+| 文档类 | INDEX.md（若有）→ grep 章节标题 → Read 行区间取命中节 |
+| 代码类 | codegraph `search_graph`/`trace_path`（有则用）→ Glob/Grep 符号名 → Read 行区间 |
+
+豁免：≤200 行小文件可直接全文读入。
 
 ## 0.2 术语基准（无 wiki 时的降级策略，🔴 纪律不降级）
 
@@ -61,32 +89,73 @@
 
 ## Step 0.5: 意图对齐（迭代循环）
 
-**执行位置：必须在主对话层执行。** 子代理无法中途与人类交互，意图对齐必须在主对话中完成。
+**执行位置（三段论边界，取代旧的"意图对齐必须在主对话层执行"全称表述）：**
+- **探测**（阅读层扫雷、绘图层硬画草稿）——可下放子代理：它不与人交互，产出落 analysis-draft。
+- **交互**（发题、收答、核销、降级确认）——🔴 必须在主对话层执行：子代理物理上见不到人。
+- **生成**（summary/DDL，即 Phase B）——可下放子代理；生成中发现的新 gap 带回来，不许自答。
 
-**核心流程（回合制，配合 MCP 工具）：**
+**核心流程（相位版，配合 MCP 工具；相位由 MCP 返回的 phase 块机械驱动，见 §0.0）：**
 
 ```
-第一层·阅读探测（显性歧义）：
-  读 PRD → 文本扫雷（九类清单）→ 断层记入 analysis-draft，标注 📄阅读层
-第二层·绘图探测（深层断层——画图是探测仪器，不是交付物）：
-  🔴 不许等答案齐才动笔——第一回合就对着 PRD 硬画草稿图（状态机/时序/决策表），
-  画不下去的节点/边用占位符标出：state "???待确认" as TBDn（节点）、--> TBDn（边）
-  → 占位处即断层，记入 analysis-draft，标注 ✏️绘图层（带 TBDn 编号）
-  🔴 失败边四类必查（每画完一个状态强制自问，防「画漏」）：
-  ①外部依赖失败（路由/下游/外部服务失败去哪）②超时（等待有没有截止）
-  ③非法输入（越权/参数不合法）④前置不满足（条件缺失进得来吗）
-  → 四类路径要么落图成边，要么图内显式注释「统一兜底」（lint L14 复核入口态）
-分流（两层共用）：
-  🔧技术断层 → 先翻旧代码实证（有唯一 ground truth 直接 resolve_question(source="code") 落账）
-  📋业务断层 → dispatch_question 发题问人类（先落盘后发送，群聊通道 @对应角色）
-回合制收敛：
-  本轮对话可以结束（非阻塞，不挂机）
-  → 下轮对话/用户说"继续" → rebroadcast_pending 对账 → collect_answers 领取答案
-  → 注入意图、消除占位、接着画（画中新露头的断层再走分流）
-  → resolve_question 核销（写 alignment-log；🔴 核销前草稿图必须已存在——MCP 机械门禁，
-     没动过笔的核销会被拒收）
-  → 重新评估置信度 → 🟢 进入 Step 1；仍有🟡/🔴 → 继续 Step 0.5
+Phase A 意图对齐（complex 需求的双探测层可并行派两个子代理；simple/medium 不拆相位，主 session 顺序执行）：
+  A0 双探测（产出落 analysis-draft，可派子代理）：
+    阅读层（显性歧义）：explore 子代理只读扫雷（九类清单）→ 返回 📄阅读层断层清单，记入 analysis-draft
+    绘图层（深层断层——画图是探测仪器，不是交付物）：绘图子代理写 draft
+      🔴 不许等答案齐才动笔——Phase A0 绘图层子代理第一回合就对着 PRD 硬画草稿图
+      （状态机/时序/决策表），画不下去的节点/边用占位符标出：
+      state "???待确认" as TBDn（节点）、--> TBDn（边）
+      → 占位处即断层，记入 analysis-draft，标注 ✏️绘图层（带 TBDn 编号）
+      🔴 失败边四类必查（每画完一个状态强制自问，防「画漏」）：
+      ①外部依赖失败（路由/下游/外部服务失败去哪）②超时（等待有没有截止）
+      ③非法输入（越权/参数不合法）④前置不满足（条件缺失进得来吗）
+      → 四类路径要么落图成边，要么图内显式注释「统一兜底」（lint L14 复核入口态）
+    🔴 验收在主 session：子代理返回后必须审 draft 的 TBDn 占位是否真实——
+      探测可下放，判断不下放
+  A1 主 session 合并断层清单：
+    🔴 只允许按图内坐标精确合并——📄 断层的「落图:」坐标与 ✏️ 断层的 TBDn 所在边，
+    规范化后字符串一致才合并（双凭据都保留）；「看着像」的绝不合并，宁可重复发题
+    让人类说「同 Qn」——误合并是静默丢失，重复发题可自愈。
+    最终机械防线：dispatch_question 对同坐标在飞题机械拒收。
+  分流（主对话层）：
+    🔧技术断层 → 先翻旧代码实证（有唯一 ground truth 直接 resolve_question(source="code") 落账）
+    📋业务断层 → dispatch_question 发题问人类（先落盘后发送，群聊通道 @对应角色）
+  回合制收敛（主对话层）：
+    本轮对话可以结束（非阻塞，不挂机）
+    → 下轮对话/用户说"继续" → rebroadcast_pending 对账 → collect_answers 领取答案
+    → 注入意图、消除占位、接着画（画中新露头的断层再走分流）
+    → resolve_question 核销（写 alignment-log；🔴 核销前草稿图必须已存在——MCP 机械门禁，
+       没动过笔的核销会被拒收）
+    → 重新评估置信度 → 🟢 进入 generate 相位；仍有🟡/🔴 → 继续 Phase A
+  A2 注入落笔：小改由主 session 直接改 draft；结构性重画可再派子代理。
+
+Phase B 生成（ready 后按 MCP 返回的派工 brief 照抄派 subagent；simple/medium 由主 session 直接生成）：
+  Phase B subagent 纪律（三态 + 两条）：
+    允许：读 PRD 取业务细节
+    禁止：发题、推翻 alignment-log 已核销结论
+    生成中新发现的 gap 整理成清单带回编排者，🔴 不得自行假设填掉
+    禁止再派子代理（判不了的带回来）
+    🔴 图必须由 draft 草稿演化——占位消除必须有 alignment-log 核销对应（lint L21 兜底）
+    映射表迁移（draft_mapping 生成正式锚点并入 summary）归属本相位
+  回流环：Phase B 发现新 🔴 → 停工带回 → 主 session 重开对齐
+    （dispatch_question 带 reflow: true，增量进 draft + alignment-log）→ 重派 Phase B。
+    🟡 不触发回流，走 record_inference 推断通道。
+  熔断：回流预算默认 2 轮（draft frontmatter reflow_budget 缺省 2），
+    reflow_round 由工具端自增（同轮多题只计一轮，全部回流题核销后关闭本轮）。
+    超限再发起新一轮会被 dispatch 机械拒收（error=ESCALATE）——向人类逐条出示
+    剩余 gap 裁决：继续回流（人类授权后手写提高 draft 的 reflow_budget）/
+    降级 abandon_question / 叫停保持 blocked；裁决留痕 alignment-log（复用降级回执纪律）。
+    lint L22 兜底：交付物 reflow_round > budget 且 log 无 ESCALATE 留痕 = CRITICAL。
+
+Phase C 交付闸门（主 session）：lint_summary 机械自检，CRITICAL 归零才可交付（Step 4）。
 ```
+
+**坐标规范形（合并与机械拒收的唯一凭据）：** 所有断层的图内坐标统一写法
+`状态机 X-->Y` / `时序图 步骤N` / `决策表 BR-n`；`dispatch_question` 的
+`coordinate` 参数承载，同坐标已有在飞题会被机械拒收。
+
+**单写者拓扑（并发纪律）：** 任一文件同一时刻只有一个写者；多生产者拆文件
+（`_review/findings/explore.md`、`findings/draw.md` 模式），join 点由主 session 合并；
+🔴 禁止文件锁。
 
 **analysis-draft 是活文档**：对齐期间持续追加——每个断层一行，格式：
 `[📄阅读层|✏️绘图层] 断层描述 | 占位: TBDn（✏️必填，图内坐标）| 出处: §x.y（📄建议）| 落图: xxx（📄命中图结构词时必填，如 状态机 X-->Y 边/时序图步骤N/BR-n）| 状态: 待决/已消`。
@@ -281,7 +350,7 @@ generated_by: intent-gate
 - **summary.md 生成前的落点写法**：核销阶段还没有正式章节号时，允许落 `analysis-draft.md §G{n}`
   临时锚点（resolve_question 只校验落点非空，不校验锚点存在性）；
   summary.md 生成后由 `draft_mapping` 把映射行迁移到正式锚点——临时落点合法，
-  但不迁移就交付不合法
+  但不迁移就交付不合法。**映射表迁移（draft_mapping 正式锚点化）在 Phase B 生成期完成**
 - 任何一条注入意图找不到落点 → 当场回问，不得静默丢弃
 - 降级为`[🟡待澄清]`的条目也在本表登记，并附人类确认记录
 
@@ -391,6 +460,10 @@ sequenceDiagram
     有图但零清单的干净需求不报——断层全来自阅读层才是红旗，零断层不是）
   - L18 层-型匹配：📄 断层命中图结构词且无 落图: 声明 = MAJOR（来源层不罚，罚无落点）
   - L20 占位对账：✏️ 的 TBDn 在 alignment-log 无核销留痕 = MAJOR（编造占位即伪造探测）
+  - L21 图演化：summary 状态机的状态未出现在 draft 草稿图 = MAJOR（凭空新增结构，
+    须能指回核销记录；TBDn 不算状态；无 draft/无图声明豁免）
+  - L22 回流熔断兜底：交付物 reflow_round > reflow_budget 且 alignment-log 无
+    ESCALATE 留痕 = CRITICAL
 
 ## 约束汇总（skill + agent 双来源，🔴 为硬性）
 
@@ -399,7 +472,8 @@ sequenceDiagram
 3. 🔴 技术打标强校验：complex 场景状态图每条边的技术动作强制必填
 4. 🔴 路径隔离：SQL 只写 `sql/`；不修改 specs/wiki；不生成业务代码
 5. 🔴 意图对齐强制：黄灯禁止自行假设推进；核心主流程歧义必须当场对齐
-6. 🔴 意图对齐在主对话层执行
+6. 🔴 意图对齐三段论：探测可下放子代理，交互（发题/收答/核销/降级确认）必须在主对话层执行，
+   生成可下放子代理（发现新 gap 带回来，不许自答）
 7. 🔴 降级确认回执：未经人类确认的自行降级 = 意图对齐未完成
 8. 🔴 意图注入映射表：每条注入有精确落点；找不到落点必须回问
 9. 🔴 术语对齐：新造词必须发题确认（基准来源见 §0.2）
@@ -413,3 +487,10 @@ sequenceDiagram
     领域级（需语义判断）→ MINOR 不拦路但强制认领（见第 16 条）；有误伤可能的规则永不升 CRITICAL
 16. MINOR 认领纪律：走红蓝 → 蓝军逐条填判断；人类直接拍板 → 拍板前 agent 必须逐条出示
     残留 MINOR，人类豁免也记 alignment-log（"已过目"留痕）
+17. 🔴 相位机机械驱动：complex 需求照 MCP 返回的 phase/next_action 执行，agent 不靠记忆走流程；
+    simple/medium 不拆相位，单 session 顺序执行
+18. 🔴 合并去重仅同坐标精确合并（坐标规范形：`状态机 X-->Y` / `时序图 步骤N` / `决策表 BR-n`），
+    「看着像」绝不合并，宁可重复发题
+19. 🔴 回流熔断：回流预算默认 ≤2 轮，超限 dispatch 机械拒收（ESCALATE），人类裁决三选一留痕
+20. 🔴 摄入纪律：先轮廓后取件，答不上「要拿什么」的材料不进上下文
+21. 🔴 单写者拓扑：任一文件同一时刻只有一个写者，多生产者拆文件，禁止文件锁

@@ -150,6 +150,9 @@ intent-gate 只跑 **single 通道**（默认且唯一）：意图断层直接�
 - 已知边界：群回复在无任何接收端存活时会被钉钉丢弃（推送模型，无拉取 API——
   `/chat/get` 需企业高级权限且读全群消息，不采用）。v1 接受丢失 + 催单重发；
   v2 可选常驻接收器（inbound 剥出独立跑 + 回复写 inbox/ 文件）。
+- 已知边界（子代理自答洞）：子代理物理上问不了人，但理论上能调 `resolve_question`
+  伪造 responder 自答。v1 不机械堵：靠 alignment-log「人类原话」可审计（蓝军 R1）
+  与 lint L20 占位对账兜底。
 
 ## 5. MCP 工具面
 
@@ -157,7 +160,7 @@ intent-gate 只跑 **single 通道**（默认且唯一）：意图断层直接�
 
 | 工具 | 入参 | 出参 | 说明 |
 |---|---|---|---|
-| `dispatch_question` | 需求名, gap描述, 类别(📋/🔧), 选项[], 推荐项+推断依据(可选), @目标[] | token | 🔴先落盘；single 通道登记后返回宿主（按精准提问格式向用户提问）；秒回不阻塞。要发钉钉群用 intent-gate-service 的 `group_dispatch`（同一契约函数落盘） |
+| `dispatch_question` | 需求名, gap描述, 类别(📋/🔧), 选项[], 推荐项+推断依据(可选), @目标[], coordinate(图内坐标，可选), reflow(回流题标记，可选) | token | 🔴先落盘；single 通道登记后返回宿主（按精准提问格式向用户提问）；秒回不阻塞。要发钉钉群用 intent-gate-service 的 `group_dispatch`（同一契约函数落盘）。coordinate 承载图内坐标（`状态机 X-->Y` / `时序图 步骤N` / `决策表 BR-n`），同坐标已有在飞题机械拒收；reflow 题由工具端自增 reflow_round（同轮多题只计一轮），超 reflow_budget（缺省 2）拒收并返回 ESCALATE |
 | `collect_answers` | 需求名 | 新答案列表（token+原话+回答人+原题） | 读 inbox/ 落盘文件，领取即归档防重复；宿主逐条注入后须调 resolve_question 核销 |
 | `resolve_question` | 需求名, token, 答案, 回答人, 注入解读, 落点, source(group/dialog/code) | 核销结果+流水号 | checklist 打勾 + 按 §4.2 契约写 alignment-log；找不到落点禁止核销，先回问 |
 | `record_inference` | 需求名, gap描述, 推断结论, 推断依据链 | 推断编号 INF-n | ②级推断登记入"推断待确认清单"，供会话末批量确认 |
@@ -181,7 +184,8 @@ intent-gate 只跑 **single 通道**（默认且唯一）：意图断层直接�
 | **playbook 本体**（需求分析工作流全文 + agent 约束，物理切红蓝） | MCP prompt `doc_analysis_playbook`（`analysis/playbook.md`） | **已实现**。九类歧义点/精准提问格式/降级回执/型态门槛/mermaid 规范/上下文加载纪律；术语基准降级策略（无 wiki 用宿主代码检索，新造词必发题） |
 | **宿主判断落账** | 工具 `record_analysis` | **已实现**。宿主语义结论（型态/复杂度/灯/gaps）→ MCP 校验+落盘 draft |
 | **机械初筛绊线** | 工具 `analyze_requirement` | 已实现，定位为交叉校验信号（语义终判归宿主） |
-| **lint 机械自检** | 工具 `lint_summary`（`analysis/lint.py`） | **已实现**。L0-L13 检查 + 三矩阵生成，逻辑冻结，禁止重写 |
+| **lint 机械自检** | 工具 `lint_summary`（`analysis/lint.py`） | **已实现**。L0-L22 检查 + 三矩阵生成，逻辑冻结，禁止重写（含 L21 图演化校验：summary 状态未出现在 draft 草稿 = MAJOR；L22 回流熔断兜底：reflow_round 超 budget 且 log 无 ESCALATE 留痕 = CRITICAL） |
+| **相位机**（phase 计算 + next_action/brief 供货） | `phase.py`（包根，防 engine/manager 循环导入） | **已实现**。相位流转不靠 agent 记忆，由账本状态机械推导透出（align → generate → gate → deliverable），generate 相位附 Phase B subagent 派工 brief |
 | **映射表锚点定位** | 工具 `draft_mapping`（`analysis/mapper.py`） | **已实现**。章节号/规则号/步骤号由脚本真实定位，禁止手写锚点 |
 | **产物生成（summary.md/mermaid/DDL）** | 宿主按 playbook Step 1-4 生成 | 归宿主——生成是语义活，MCP 用 lint/落点校验守门 |
 | 红线/术语基准 | 项目文件（rules/wiki），有则宿主必读，无则走降级策略 | 不进 MCP——项目私有财产不焊死在通用工具里 |

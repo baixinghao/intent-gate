@@ -22,10 +22,43 @@ from pathlib import Path
 
 from ..logging import get_logger
 from ..models import DRAFT_NO_DIAGRAM_RE, new_gate_token
+from ..phase import DEFAULT_REFLOW_BUDGET, compute_phase
 from ..security import SenderPolicy, parse_reply
 from .store import PendingQuestion, ReviewStore
 
 log = get_logger("alignment")
+
+
+def _to_int(text: object, default: int = 0) -> int:
+    """frontmatter 值容错转 int（人类手写改坏的值不炸登记链路）。"""
+    try:
+        return int(str(text).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+# 图内坐标规范化：箭头写法统一（- > / --> / → 一律归一为 ->），去首尾空白
+_COORD_ARROW_RE = re.compile(r"\s*(?:-{1,2}>|→)\s*")
+
+
+def _normalize_coordinate(text: str) -> str:
+    return _COORD_ARROW_RE.sub("->", text).strip()
+
+
+def _line_token(line: str) -> str:
+    """从清单行取 HG-XXXX token（格式见 store.add_pending）。"""
+    if "[HG-" in line:
+        return f"HG-{line.split('[HG-', 1)[1][:4]}"
+    return ""
+
+
+def _close_reflow_round(store: ReviewStore) -> None:
+    """回流轮次关闭：未勾行中已无「回流: R」在飞标记 → reflow_active 落回 false，
+    下次 reflow dispatch 才开新一轮（与 register_question 的按轮幂等计数配对）。"""
+    if any("回流: R" in line for line in store.unchecked_lines()):
+        return
+    if store.read_draft_meta().get("reflow_active") == "true":
+        store.update_draft_meta(reflow_active="false")
 
 
 # ---------------------------------------------------------------- 契约函数（intent-gate-service 复用）
@@ -37,12 +70,21 @@ def register_question(
     recommend: str = "",
     targets: list[str] | None = None,
     severity: str = "🟡",
+    coordinate: str | None = None,
+    reflow: bool = False,
 ) -> dict:
     """校验 + 落盘一道意图断层题（🔴 先落盘后发送的唯一入口）。
 
     intent-gate 的 dispatch_question 与 intent-gate-service 的 group_dispatch 都走这里——
     校验规则与清单格式两边不分叉。成功返回 {"ok", "token", "question"}；
-    拒收返回 {"ok": False, "reason"}（不落盘）。
+    拒收返回 {"ok": False, ...}（不落盘）。
+
+    coordinate: 图内坐标（如「状态机 X-->Y」「时序图 步骤3」「决策表 BR-01」）。
+      非空时做同坐标查重——同一坐标已有在飞题则拒登（error="同坐标已有在飞题"，
+      附 existing_token）。
+    reflow: 标记本题是 Phase B 生成期带回的回流题。轮次按 draft frontmatter
+      计数且按轮幂等（reflow_active=true 期间不自增）；开新一轮前熔断检查
+      reflow_round >= reflow_budget（缺省 2），超限拒登（error="ESCALATE"）。
     """
     if category not in ("📋", "🔧"):
         return {"ok": False, "reason": "category 只支持 📋(业务) 或 🔧(技术)"}
@@ -54,6 +96,46 @@ def register_question(
         # 有 AI 推荐项的点头题可放宽（推荐项即选项1，其余由宿主补2-3个也行，
         # 但这里给宿主留了带 recommend 免三选项的口子，防止形式主义凑数）
         return {"ok": False, "reason": "无推荐项的题目至少给 3 个候选选项"}
+
+    # ---- 同坐标查重：同一图内坐标只允许一道在飞题 ----
+    coordinate = (coordinate or "").strip()
+    if coordinate:
+        want = _normalize_coordinate(coordinate)
+        for line in store.unchecked_lines():
+            for seg in line.split(" | "):
+                seg = seg.strip()
+                if seg.startswith("坐标:") and \
+                        _normalize_coordinate(seg.removeprefix("坐标:")) == want:
+                    return {"ok": False, "error": "同坐标已有在飞题",
+                            "existing_token": _line_token(line)}
+
+    # ---- 回流计数（按轮幂等）+ 熔断 ----
+    reflow_round_tag = 0
+    if reflow:
+        meta = store.read_draft_meta()
+        budget = _to_int(meta.get("reflow_budget"), DEFAULT_REFLOW_BUDGET)
+        if meta.get("reflow_active") == "true":
+            # 本轮仍开着：沿用当前轮次号，不自增（同轮多题只计一轮）
+            reflow_round_tag = _to_int(meta.get("reflow_round"), 0)
+        else:
+            current = _to_int(meta.get("reflow_round"), 0)
+            if current >= budget:
+                return {
+                    "ok": False,
+                    "error": "ESCALATE",
+                    "message": (
+                        f"回流已达预算上限（reflow_round={current}，"
+                        f"reflow_budget={budget}）：请向人类出示剩余 gap 逐条裁决"
+                        "——继续回流须由人类授权后在 draft frontmatter 手写提高 "
+                        "reflow_budget；或降级走 abandon_question；或叫停保持 "
+                        "blocked。裁决须留痕 alignment-log。"
+                    ),
+                }
+            reflow_round_tag = current + 1
+            store.update_draft_meta(
+                reflow_round=reflow_round_tag, reflow_active="true"
+            )
+
     token = new_gate_token(store.pending_tokens() | store.pending_tokens(checked=True))
     q = PendingQuestion(
         token=token,
@@ -63,6 +145,8 @@ def register_question(
         options=opts,
         recommend=recommend,
         targets=list(targets or []),
+        coordinate=coordinate,
+        reflow_round_tag=reflow_round_tag,
     )
     store.add_pending(q)  # 🔴 先落盘，之后任何通道才允许发送
     return {"ok": True, "token": token, "question": q}
@@ -168,16 +252,23 @@ class AlignmentManager:
         targets: list[str] | None = None,
         at_user_ids: list[str] | None = None,
         severity: str = "🟡",
+        coordinate: str | None = None,
+        reflow: bool = False,
     ) -> dict:
         """登记一道意图断层题（先落盘），返回给宿主按精准提问格式向用户提问。
 
         category: "📋"（业务题）或 "🔧"（技术题）。
         severity: "🔴"（核心逻辑断层，未消则 status=blocked）或 "🟡"（局部歧义）。
         recommend: AI 推荐项+推断依据（核心主流程题用它实现"点头式确认"）。
+        coordinate: 图内坐标（如「状态机 X-->Y」），同一坐标只允许一道在飞题。
+        reflow: Phase B 生成期带回的回流题标记（轮次计数+预算熔断，见 register_question）。
         钉钉群分发走姊妹篇 intent-gate-service 的 group_dispatch（同一契约函数落盘）。
         """
         store = self._store(feature)
-        reg = register_question(store, gap, category, options, recommend, targets, severity)
+        reg = register_question(
+            store, gap, category, options, recommend, targets, severity,
+            coordinate=coordinate, reflow=reflow,
+        )
         if not reg["ok"]:
             return reg
         token = reg["token"]
@@ -261,8 +352,10 @@ class AlignmentManager:
             landing=landing,
         )
         store.check_off(token, f"{responder}: {answer[:60]}")
+        _close_reflow_round(store)  # 回流题核销殆尽时关闭本轮（下次回流才开新轮）
         log.info("question resolved feature=%s token=%s source=%s", feature, token, source)
-        return {"ok": True, "token": token, "log_entry": f"Q{n}"}
+        return {"ok": True, "token": token, "log_entry": f"Q{n}",
+                "phase": compute_phase(self._root, feature)}
 
     # ------------------------------------------------------------- 推断
     def record_inference(self, feature: str, gap: str, conclusion: str, basis: str) -> dict:
@@ -350,7 +443,9 @@ class AlignmentManager:
 
         token=None = 废弃本需求全部未决题。废弃后该题不再要求回答、
         不阻断 intent_aligned_ready，也不可再 resolve。"""
-        count = self._store(feature).abandon_pending(token, reason)
+        store = self._store(feature)
+        count = store.abandon_pending(token, reason)
+        _close_reflow_round(store)  # 回流题被废弃殆尽同样关闭本轮
         log.info("question abandoned feature=%s token=%s count=%d", feature, token, count)
         if token is not None and count == 0:
             return {"ok": False, "reason": f"未找到未决题 {token}（可能已核销/已废弃）"}
@@ -401,6 +496,7 @@ class AlignmentManager:
             "abandoned_questions": abandoned,
             "inbox_new_answers": inbox_new,
             "intent_aligned_ready": ready,
+            "phase": compute_phase(self._root, feature),
             "frontmatter_advice": {
                 "status": status,
                 "intent_aligned": ready,

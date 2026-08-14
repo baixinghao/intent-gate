@@ -35,17 +35,24 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         targets: list[str] | None = None,
         at_user_ids: list[str] | None = None,
         severity: str = "🟡",
+        coordinate: str | None = None,
+        reflow: bool = False,
     ) -> dict:
         """登记并分发一道意图断层题（非阻塞，秒回）。
 
         feature 为 .harness/requests/ 下的需求名；category 用 📋(业务)/🔧(技术)
         标记归属角色；severity 用 🔴(核心逻辑断层，未消则 status=blocked)/🟡(局部歧义，默认)；
         options 至少 3 个互斥选项（有 recommend 推荐项可放宽）。
+        coordinate 为图内坐标（如「状态机 X-->Y」「时序图 步骤3」「决策表 BR-01」），
+        同一坐标只允许一道在飞题（重复登记被拒并返回 existing_token）。
+        reflow=True 标记 Phase B 生成期带回的回流题：轮次按 draft frontmatter
+        计数（同轮幂等），超 reflow_budget（缺省 2）拒登并返回 error=ESCALATE。
         本服务 single 通道：题目登记后返回给你，按精准提问格式向用户提问；
         要发钉钉群用姊妹篇 intent-gate-service 的 group_dispatch（同一落盘契约）。
         返回 token，后续凭 token 收答案。"""
         return await align.dispatch_question(
-            feature, gap, category, options, recommend, targets, at_user_ids, severity
+            feature, gap, category, options, recommend, targets, at_user_ids,
+            severity, coordinate=coordinate, reflow=reflow,
         )
 
     @mcp.tool()
@@ -70,7 +77,8 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
 
         source: group(钉钉群)/dialog(对话框)/code(代码实证)。
         interpretation 是注入图/规则的语义；landing 必须精确到
-        状态机边/时序图步骤/决策表规则号/字段——找不到落点就不要核销，先回问。"""
+        状态机边/时序图步骤/决策表规则号/字段——找不到落点就不要核销，先回问。
+        成功核销的返回含 phase 块（相位机判定：align/generate/gate/deliverable）。"""
         return align.resolve_question(
             feature, token, answer, responder, interpretation, landing, source
         )
@@ -106,7 +114,8 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
 
     @mcp.tool()
     def list_pending_questions(feature: str) -> dict:
-        """自检：未勾题数、未确认推断数、已废弃数、是否具备标 intent_aligned 的条件。"""
+        """自检：未勾题数、未确认推断数、已废弃数、是否具备标 intent_aligned 的条件。
+        返回含 phase 块（相位机判定：align/generate/gate/deliverable）。"""
         return align.list_pending(feature)
 
     @mcp.tool()

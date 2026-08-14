@@ -344,5 +344,78 @@ class DocxInputTests(AnalysisTestBase):
         self.assertIn("mammoth", str(ctx.exception))
 
 
+class PhaseTests(AnalysisTestBase):
+    """相位机透出（phase.compute_phase）：resume 返回带 phase 块，
+    align → generate → gate/deliverable 按文件现场机械判定。"""
+
+    def _make_ready_site(self, feature="ready-f"):
+        """构造意图已齐现场：无未决题/无推断/inbox 空（仅留已核销流水）。"""
+        d = self.root / ".harness" / "requests" / feature / "_review"
+        d.mkdir(parents=True)
+        (d / "alignment-log.md").write_text(
+            "# 意图对齐流水\n\n## Q1 题\n- 落点：§1\n", encoding="utf-8")
+        return d
+
+    def test_fresh_draft_has_reflow_round(self):
+        """fresh 落盘的 draft frontmatter 必须带 reflow_round: 0（回流计数起点）。"""
+        result = analyze_request(self.root, "withdraw", self.write_prd(RED_PRD))
+        self.assertTrue(result["ok"])
+        draft = (self.root / ".harness" / "requests" / "withdraw"
+                 / "_review" / "analysis-draft.md").read_text("utf-8")
+        self.assertIn("intent_aligned: false\nreflow_round: 0\n", draft)
+
+    def test_record_analysis_draft_has_reflow_round(self):
+        """record_analysis 的内联 draft 生成器同样带 reflow_round: 0。"""
+        from intent_gate.analysis.engine import record_analysis
+
+        record_analysis(self.root, "rec-f", ["State-Driven"], "simple", "🟢")
+        draft = (self.root / ".harness" / "requests" / "rec-f"
+                 / "_review" / "analysis-draft.md").read_text("utf-8")
+        self.assertIn("reflow_round: 0", draft)
+
+    def test_resume_returns_phase_block(self):
+        """resume 返回含 phase 块；有未决题时相位为 align。"""
+        mgr = AlignmentManager(self.root)
+        asyncio.run(mgr.dispatch_question(
+            "order-refund", "退款后订单状态？", "📋", ["a", "b", "c"]))
+        result = analyze_request(self.root, "order-refund")
+        self.assertEqual(result["mode"], "resume")
+        phase = result["phase"]
+        self.assertEqual(phase["phase"], "align")
+        self.assertIn("reflow_round", phase)
+        self.assertIn("reflow_budget", phase)
+
+    def test_ready_site_phase_generate_with_brief(self):
+        """意图已齐 + 无 summary.md → phase=generate，brief 派工单随返回给出。"""
+        self._make_ready_site()
+        result = analyze_request(self.root, "ready-f")
+        phase = result["phase"]
+        self.assertEqual(phase["phase"], "generate")
+        brief = phase["brief"]
+        self.assertIn("analysis-draft.md", brief)
+        self.assertIn("alignment-log.md", brief)
+        self.assertIn("summary.md", brief)
+
+    def test_summary_present_phase_gate_then_deliverable(self):
+        """有 summary.md：无 lint-report 或 CRITICAL 非零 → gate；归零 → deliverable。"""
+        d = self._make_ready_site()
+        (d.parent / "summary.md").write_text("# 报告\n", encoding="utf-8")
+        # lint-report 缺失 → gate
+        result = analyze_request(self.root, "ready-f")
+        self.assertEqual(result["phase"]["phase"], "gate")
+        # CRITICAL 非零 → 仍 gate
+        (d / "lint-report.md").write_text(
+            "# summary_lint 机械检查报告（v2）\n\n"
+            "> 对象：summary.md | CRITICAL 2 / 共 3 条\n", encoding="utf-8")
+        self.assertEqual(
+            analyze_request(self.root, "ready-f")["phase"]["phase"], "gate")
+        # CRITICAL 归零 → deliverable
+        (d / "lint-report.md").write_text(
+            "# summary_lint 机械检查报告（v2）\n\n"
+            "> 对象：summary.md | CRITICAL 0 / 共 1 条\n", encoding="utf-8")
+        self.assertEqual(
+            analyze_request(self.root, "ready-f")["phase"]["phase"], "deliverable")
+
+
 if __name__ == "__main__":
     unittest.main()

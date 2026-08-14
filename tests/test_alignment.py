@@ -370,5 +370,143 @@ class DraftGateTests(AlignmentTestBase):
         self.assertEqual(passed["failed"], [])
 
 
+class CoordinateDedupTests(AlignmentTestBase):
+    """同坐标查重：同一图内坐标只允许一道在飞题（防回流期重复开闸）。"""
+
+    def test_same_coordinate_rejected_with_existing_token(self):
+        r1 = run(self.mgr.dispatch_question(
+            "f", "题一", "📋", OPTIONS, coordinate="状态机 A-->B"))
+        self.assertTrue(r1["ok"])
+        # 箭头写法不同（A -> B / A→B）规范化后仍视为同坐标
+        for alias in ("状态机 A -> B", "状态机 A→B", " 状态机 A-->B "):
+            r2 = run(self.mgr.dispatch_question(
+                "f", "题二", "📋", OPTIONS, coordinate=alias))
+            self.assertFalse(r2["ok"], f"别名 {alias!r} 未被查重拦截")
+            self.assertEqual(r2["error"], "同坐标已有在飞题")
+            self.assertEqual(r2["existing_token"], r1["token"])
+        # 被拒的题不落盘：清单里仍只有一道
+        checklist = (self.review_dir("f") / "pending-questions.md").read_text("utf-8")
+        self.assertEqual(checklist.count("- [ ]"), 1)
+        # 坐标渲染进清单行（追加在尾部，不破坏既有字段）
+        self.assertIn("坐标: 状态机 A-->B", checklist)
+
+    def test_different_or_no_coordinate_unaffected(self):
+        r1 = run(self.mgr.dispatch_question(
+            "f", "题一", "📋", OPTIONS, coordinate="状态机 A-->B"))
+        self.assertTrue(r1["ok"])
+        r2 = run(self.mgr.dispatch_question(
+            "f", "题二", "📋", OPTIONS, coordinate="状态机 B-->C"))
+        self.assertTrue(r2["ok"])
+        r3 = run(self.mgr.dispatch_question("f", "题三", "📋", OPTIONS))
+        self.assertTrue(r3["ok"])
+        # 查重只扫未勾行：原题核销后同坐标可重登
+        self.write_draft("f")
+        self.mgr.resolve_question("f", r1["token"], "选1", "张三",
+                                  "语义", "状态机 A-->B 边", source="dialog")
+        r4 = run(self.mgr.dispatch_question(
+            "f", "题四", "📋", OPTIONS, coordinate="状态机 A-->B"))
+        self.assertTrue(r4["ok"])
+
+
+class ReflowTests(AlignmentTestBase):
+    """回流轮次计数（按轮幂等）+ 预算熔断 + 轮次关闭。"""
+
+    def write_meta_draft(self, feature="f"):
+        """带 frontmatter 的绘图层草稿（reflow 计数的落点；含 mermaid 过核销门禁）。"""
+        d = self.review_dir(feature)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "analysis-draft.md").write_text(
+            "---\n"
+            f"feature: {feature}\n"
+            "intent_aligned: false\n"
+            "reflow_round: 0\n"
+            "---\n\n"
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    A --> B: x (DB_INSERT)\n```\n",
+            encoding="utf-8")
+
+    def meta(self, feature="f"):
+        return self.mgr._store(feature).read_draft_meta()
+
+    def dispatch_reflow(self, feature="f"):
+        return run(self.mgr.dispatch_question(
+            feature, "生成期新发现的回流 gap", "📋", OPTIONS, reflow=True))
+
+    def resolve(self, token, feature="f"):
+        return self.mgr.resolve_question(
+            feature, token, "选1", "张三", "语义", "状态机 A-->B 边", source="dialog")
+
+    def test_reflow_same_round_counts_once(self):
+        """③ 同轮两次 reflow dispatch 只计一轮（reflow_active=true 期间不自增）。"""
+        self.write_meta_draft()
+        r1 = self.dispatch_reflow()
+        r2 = self.dispatch_reflow()
+        self.assertTrue(r1["ok"] and r2["ok"])
+        meta = self.meta()
+        self.assertEqual(meta["reflow_round"], "1")
+        self.assertEqual(meta["reflow_active"], "true")
+        checklist = (self.review_dir("f") / "pending-questions.md").read_text("utf-8")
+        self.assertEqual(checklist.count("回流: R1"), 2)
+
+    def test_round_closes_after_resolve_then_second_round(self):
+        """④ 全部回流题核销后 reflow_active=false；再次 reflow dispatch 开第二轮。"""
+        self.write_meta_draft()
+        t1 = self.dispatch_reflow()["token"]
+        t2 = self.dispatch_reflow()["token"]
+        self.resolve(t1)
+        # 还有一道在飞回流题，轮次不关闭
+        self.assertEqual(self.meta()["reflow_active"], "true")
+        self.resolve(t2)
+        self.assertEqual(self.meta()["reflow_active"], "false")
+        r = self.dispatch_reflow()
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.meta()["reflow_round"], "2")
+        checklist = (self.review_dir("f") / "pending-questions.md").read_text("utf-8")
+        self.assertIn("回流: R2", checklist)
+
+    def test_abandon_also_closes_round(self):
+        """轮次关闭对 abandon_question 同样生效（回流题被废弃殆尽）。"""
+        self.write_meta_draft()
+        self.dispatch_reflow()
+        self.mgr.abandon_question("f")
+        self.assertEqual(self.meta()["reflow_active"], "false")
+
+    def test_budget_exceeded_escalate(self):
+        """⑤ reflow_round 到 budget（缺省 2）后，开新一轮被拒且 error=ESCALATE。"""
+        self.write_meta_draft()
+        for _ in range(2):  # 两轮各自开闸→核销→关闭
+            self.resolve(self.dispatch_reflow()["token"])
+        self.assertEqual(self.meta()["reflow_round"], "2")
+        r = self.dispatch_reflow()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"], "ESCALATE")
+        self.assertIn("reflow_budget", r["message"])
+        # 熔断拒登不落盘、不改 frontmatter
+        self.assertEqual(self.meta()["reflow_round"], "2")
+
+    def test_human_raised_budget_allows_next_round(self):
+        """⑥ 人类授权后在 draft frontmatter 手写提高 reflow_budget → 可再回流。"""
+        self.write_meta_draft()
+        for _ in range(2):
+            self.resolve(self.dispatch_reflow()["token"])
+        self.assertEqual(self.dispatch_reflow()["error"], "ESCALATE")
+        self.mgr._store("f").update_draft_meta(reflow_budget=4)
+        r = self.dispatch_reflow()
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.meta()["reflow_round"], "3")
+
+    def test_phase_block_in_list_pending_and_resolve(self):
+        """⑦ list_pending 与 resolve_question 成功返回均含 phase 块。"""
+        self.write_meta_draft()
+        token = run(self.mgr.dispatch_question("f", "题", "📋", OPTIONS))["token"]
+        res = self.resolve(token)
+        self.assertTrue(res["ok"])
+        self.assertIn("phase", res)
+        # 题已核销、无 summary → 相位推进到 generate
+        self.assertEqual(res["phase"]["phase"], "generate")
+        lp = self.mgr.list_pending("f")
+        self.assertIn("phase", lp)
+        self.assertEqual(lp["phase"]["phase"], "generate")
+
+
 if __name__ == "__main__":
     unittest.main()

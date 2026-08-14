@@ -52,7 +52,8 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
           正式判断由你按 playbook 语义分析后调 record_analysis 落账。
         - 中断续跑（resume）：现场已存在时自动触发。只读文件现场，汇报
           已答/未决/待确认推断/新答案 + skill 词表的 frontmatter 建议 +
-          下一步该调的工具动作。"""
+          下一步该调的工具动作。返回含 phase 块（相位机判定：
+          align/generate/gate/deliverable）。"""
         return analyze_request(workspace_root, feature, prd_path)
 
     @mcp.tool()
@@ -79,12 +80,12 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
 
     @mcp.tool()
     def lint_summary(summary_path: str) -> dict:
-        """summary.md 机械自检（L1-L13 + 三矩阵，逻辑冻结）。
+        """summary.md 机械自检（L1-L22 + 三矩阵，逻辑冻结）。
 
         L1 成功终态 / L2 死状态 / L3 多出边 / L4 映射表锚点 / L5 BR 引用 /
         L6 表读写矩阵 / L7 映射行覆盖 / L8 降级回执 / L9 路径隔离 /
-        L10 空矩阵② / L11 complex 打标 / L12 锚点可机检 / L13 占位符残留
-        + 三张矩阵骨架。
+        L10 空矩阵② / L11 complex 打标 / L12 锚点可机检 / L13 占位符残留 /
+        L21 图演化校验 / L22 回流熔断兜底 + 三张矩阵骨架。
         🔴 CRITICAL 未归零不得交付（playbook Step 4 门禁）。"""
         return run_lint(summary_path)
 

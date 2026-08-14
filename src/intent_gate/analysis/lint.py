@@ -48,6 +48,14 @@
       （代码实证是加分项），罚的是图结构断层无图内落点；旧格式不启用）
   L20 TBDn-核销对应（MAJOR。✏️ 占位的 TBDn 必须在 alignment-log 有核销留痕，
       编造占位 = 伪造探测；只扫 tbd 凭据字段）
+  L21 图演化校验（MAJOR。summary 状态机的每个状态 id 必须能在 draft 的
+      stateDiagram 内容中找到——边端点/state "..." as X 别名/X : 描述 声明；
+      凭空新增结构须能指回 alignment-log 核销记录。豁免：无 draft/draft 显式
+      无图声明/draft 无状态机块/summary 无状态机；draft 的 TBDn 占位不算状态）
+  L22 回流熔断兜底（CRITICAL。draft frontmatter reflow_round > reflow_budget
+      （缺省 2）且 alignment-log 无 ESCALATE 人类裁决留痕——dispatch 的熔断
+      挡「开新一轮」，本规则兜「手写改爆 frontmatter」；旧现场无 reflow_round
+      字段不报）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -113,6 +121,37 @@ DRAFT_GAP_HEAD_RE = r"^###\s+G(\d+)\s+.*?\[(✏️绘图层|📄阅读层)\]\s*(
 DRAFT_TBD_RE = r"^\s*占位:\s*(TBD\d+)"
 DRAFT_REF_RE = r"^\s*出处:\s*(§[\d.]+)"
 DRAFT_LANDING_RE = r"^\s*落图:\s*(.+)$"
+
+# ---- 第三批：相位机配套（图演化纪律 + 回流熔断兜底）----
+# L21 draft 状态机声明解析：state "..." as X 别名 / X : 描述 声明行（非边行）
+L21_ALIAS_RE = r'state\s+"[^"]+"\s+as\s+([\w一-鿿]+)'
+L21_DECL_RE = r"^[ \t]*([\w一-鿿]+)[ \t]*:"
+# L22 缺省回流预算（与 phase.DEFAULT_REFLOW_BUDGET 同值；lint 保持零依赖单源在常量）
+L22_DEFAULT_REFLOW_BUDGET = 2
+
+
+def _draft_meta(dtext: str) -> dict:
+    """draft frontmatter 手工切分（与 ReviewStore.read_draft_meta 同口径，
+    lint 逻辑冻结保持零跨层依赖，不引 yaml）。"""
+    lines = dtext.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    meta = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta
+
+
+def _to_int(text: object, default: int = 0) -> int:
+    """frontmatter 值容错转 int（手写改坏的值按缺省处理，不炸检查器）。"""
+    try:
+        return int(str(text).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _state_aliases(blocks, text):
@@ -471,6 +510,60 @@ def lint(summary_path: Path):
                                          "alignment-log 无对应核销记录——占位只许代码实证/"
                                          "人类拍板消除并留痕，编造占位即伪造探测"))
 
+    # ---- 第三批：相位机配套 L21/L22 ----
+    # L21 图演化校验（MAJOR）：summary 状态机的每个状态 id（剔除 [*]）必须能在
+    # draft 的 stateDiagram 内容中找到（边端点 / state "..." as X 别名 /
+    # X : 描述 声明）——图演化纪律的机械半边：凭空新增的结构须能指回
+    # alignment-log 核销记录。豁免：无 draft / draft 显式无图声明 /
+    # draft 无状态机块 / summary 自身无状态机。draft 里的 TBDn 占位不算状态。
+    if edges and draft_path.exists():
+        dtext21 = draft_path.read_text(encoding="utf-8")
+        if not re.search(DRAFT_NO_DIAGRAM_RE, dtext21):
+            dstates = set()
+            for b in re.findall(r"```mermaid(.*?)```", dtext21, re.S):
+                if "stateDiagram" not in b:
+                    continue
+                for m in edge_re.finditer(b):
+                    dstates.add(m.group(1))
+                    dstates.add(m.group(2))
+                dstates.update(re.findall(L21_ALIAS_RE, b))
+                for ln in b.split("\n"):
+                    if "-->" in ln:
+                        continue
+                    m = re.match(L21_DECL_RE, ln)
+                    if m:
+                        dstates.add(m.group(1))
+            dstates = {s for s in dstates
+                       if s != "[*]" and not re.fullmatch(r"TBD\d+", s)}
+            if dstates:
+                for st in sorted(states):
+                    if st not in dstates:
+                        findings.append(("MAJOR", "L21",
+                                         f"状态 {st} 未出现在草稿图，凭空新增结构须能指回 "
+                                         "alignment-log 核销记录（图演化纪律：summary 的图"
+                                         "必须由 draft 草稿图演化而来，禁止凭空重画）"))
+
+    # L22 回流熔断兜底（CRITICAL）：dispatch 的 reflow 熔断挡的是「开新一轮」，
+    # draft frontmatter 被手写绕过（reflow_round 直接改超 budget）时这里兜底。
+    # 超限且 alignment-log 无 ESCALATE 人类裁决留痕 → CRITICAL。
+    # draft 无 reflow_round 字段（旧现场）不报。
+    if draft_path.exists():
+        dtext22 = draft_path.read_text(encoding="utf-8")
+        dmeta = _draft_meta(dtext22)
+        if "reflow_round" in dmeta:
+            round_no = _to_int(dmeta.get("reflow_round"), 0)
+            budget = _to_int(dmeta.get("reflow_budget"), L22_DEFAULT_REFLOW_BUDGET)
+            if round_no > budget:
+                log_path3 = summary_path.parent / "_review" / "alignment-log.md"
+                log_text3 = (log_path3.read_text(encoding="utf-8")
+                             if log_path3.exists() else "")
+                if "ESCALATE" not in log_text3:
+                    findings.append(("CRITICAL", "L22",
+                                     f"回流超限（reflow_round={round_no} > "
+                                     f"reflow_budget={budget}）且 alignment-log 无 "
+                                     "ESCALATE 人类裁决留痕——回流超预算必须由人类"
+                                     "逐条裁决并留痕，禁止静默继续回流"))
+
     # ---- L9 路径隔离：DDL 只落项目根 sql/，禁止内嵌 summary.md ----
     # 错题集 2026-08-12：SQL 全写进 summary.md 时 L6 的输入源（sql/*.sql）为空 →
     # L6 静默失明。机械半边补在这里：内嵌 CREATE TABLE 与「登记了 sql/ 路径但
@@ -579,6 +672,14 @@ def _contract_text() -> list[str]:
         "- **L20 TBDn-核销对应**：draft 中每个 ✏️ 占位的 TBDn 须在 alignment-log "
         "找到含该编号的核销记录 → 无则 MAJOR（编造占位 = 伪造探测；"
         "只扫 tbd 凭据字段，不扫散文正文）",
+        "- **L21 图演化校验**：summary 状态机每个状态 id（剔除 [*]）须能在 draft 的"
+        " stateDiagram 内容中找到（边端点 / `state \"...\" as X` 别名 / `X : 描述`"
+        " 声明；draft 的 TBDn 占位不算状态）→ 凭空新增 MAJOR，须能指回 "
+        "alignment-log 核销记录。豁免：无 draft / draft 显式无图声明 / "
+        "draft 无状态机块 / summary 无状态机",
+        f"- **L22 回流熔断兜底**：draft frontmatter `reflow_round > reflow_budget`"
+        f"（缺省 {L22_DEFAULT_REFLOW_BUDGET}）且 alignment-log 无 `ESCALATE` 人类裁决"
+        "留痕 → CRITICAL；draft 无 reflow_round 字段（旧现场）不报",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -592,7 +693,7 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L20 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L22 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:
