@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from ..logging import get_logger
-from ..models import new_gate_token
+from ..models import DRAFT_NO_DIAGRAM_RE, new_gate_token
 from ..security import SenderPolicy, parse_reply
 from .store import PendingQuestion, ReviewStore
 
@@ -72,7 +72,7 @@ def register_question(
 # 画图是探测仪器不是交付物：首次核销（含推断确认、代码实证落账）前，
 # analysis-draft.md 必须已含 mermaid 草稿——或显式声明无图理由（simple 场景）。
 # 发题/领题不受限：阅读层断层合法先来；但"带着没动过笔的状态进入核销"禁止。
-_DRAFT_NO_DIAGRAM_RE = r"无需画图|无需绘图|不需要画图|无图可画|不触发任何图"
+# 豁免词表单源在 models.DRAFT_NO_DIAGRAM_RE（analysis.lint 的 L16 共用）。
 
 
 def _require_drawing_draft(store: ReviewStore) -> dict | None:
@@ -84,7 +84,7 @@ def _require_drawing_draft(store: ReviewStore) -> dict | None:
                           "画图是探测仪器，不许带着没动过笔的状态进入核销"
                           "（playbook Step 0.5 双层意图对齐）"}
     text = draft.read_text(encoding="utf-8")
-    if "```mermaid" not in text and not re.search(_DRAFT_NO_DIAGRAM_RE, text):
+    if "```mermaid" not in text and not re.search(DRAFT_NO_DIAGRAM_RE, text):
         return {"ok": False,
                 "reason": "analysis-draft.md 不含任何 mermaid 草稿——先硬画草稿"
                           "（卡壳处用 state \"???待确认\" as TBDn / --> TBDn 占位），再核销；"

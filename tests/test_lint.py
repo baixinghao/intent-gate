@@ -741,5 +741,164 @@ class L15DdlEnumConsistencyTests(LintTestBase):
         self.assertNotIn("L15", _rules(findings))
 
 
+class L16DrawingZeroOutputTests(LintTestBase):
+    """L16（MINOR，错题集 2026-08-14 假探测案）：draft 有图/有清单但 ✏️ 标注为零
+    → 绘图探测疑似未开机。显式声明无需画图 → 豁免（复用 alignment 词表单源）。"""
+
+    def write_draft(self, text: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(text, encoding="utf-8")
+
+    def test_tagged_gaps_all_reading_layer_minor(self):
+        """阳性：有 mermaid 图但断层全标 📄 → L16 MINOR。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [📄阅读层] 费率口径未说明\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        l16 = [(lv, d) for lv, r, d in findings if r == "L16"]
+        self.assertEqual(len(l16), 1)
+        self.assertEqual(l16[0][0], "MINOR")
+
+    def test_legacy_untagged_gap_list_minor(self):
+        """逼升级：旧格式清单（无层标注）也报 L16 MINOR。"""
+        self.write_draft("# 草稿\n\n### G1 🔴 📋 费率口径未说明\n  1. a\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertIn("L16", _rules(findings))
+
+    def test_drawing_gap_present_silent(self):
+        """阴性：✏️ ≥1 → 探测开过机，不报。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [✏️绘图层] 提交后跳转到哪（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L16", _rules(findings))
+
+    def test_no_diagram_declaration_exempt(self):
+        """豁免：显式声明「无需画图」→ 静默。"""
+        self.write_draft("# 草稿\n\n无需画图：纯文案变更，不触发任何图。\n\n"
+                         "### G1 🟡 📋 [📄阅读层] 文案口径未定\n  1. a\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L16", _rules(findings))
+
+    def test_no_draft_not_fired(self):
+        """防误伤：无 draft 不启用。"""
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L16", _rules(findings))
+
+    def test_mermaid_but_zero_gap_list_silent(self):
+        """防误伤（评审 2026-08-14 ①收紧）：有图但真零断层清单的干净需求
+        不报——playbook 原文「断层全部来自阅读层」才是红旗，「零断层」不是。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "（宿主判定无歧义点）\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L16", _rules(findings))
+
+
+class L18LayerTypeMatchTests(LintTestBase):
+    """L18（MAJOR）：📄 断层命中图结构词表且无 落图: 声明 → 报。
+    🔴 来源层不罚（从 wiki/旧代码找到答案是加分项），罚的是图结构断层无图内落点。"""
+
+    def write_draft(self, text: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(text, encoding="utf-8")
+
+    def test_reading_gap_graph_word_no_landing_major(self):
+        """阳性：📄「提交成功后的跳转分支未说明」无落图声明 → L18 MAJOR。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [✏️绘图层] 签署超时进什么态（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n\n"
+            "### G2 🔴 📋 [📄阅读层] 提交成功后的跳转分支未说明\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        l18 = [(lv, d) for lv, r, d in findings if r == "L18"]
+        self.assertEqual(len(l18), 1, f"L18 未抓伪装: {findings}")
+        self.assertEqual(l18[0][0], "MAJOR")
+        self.assertIn("G2", l18[0][1])
+
+    def test_reading_gap_with_landing_silent(self):
+        """阴性：📄 命中图结构词但有 落图: 声明（含锚点形态）→ 不报。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [✏️绘图层] 签署超时进什么态（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n\n"
+            "### G2 🔴 📋 [📄阅读层] 提交成功后的跳转分支未说明\n"
+            "  落图: 状态机 SUBMITTED-->WAITING 边（wiki 代码实证）\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L18", _rules(findings))
+
+    def test_drawing_gap_not_checked(self):
+        """✏️ 断层自带占位坐标，L18 不查。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [✏️绘图层] 提交后的跳转分支（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L18", _rules(findings))
+
+    def test_pure_text_gap_not_fined(self):
+        """防误伤：📄「埋点事件命名规范未定」不命中图结构词 → 静默。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [✏️绘图层] 签署超时进什么态（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n\n"
+            "### G2 🟡 📋 [📄阅读层] 埋点事件命名规范未定\n  1. a\n  2. b\n  3. c\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L18", _rules(findings))
+
+    def test_legacy_untagged_not_fired(self):
+        """防误伤：旧格式（无层标注）L18 不启用——逼升级由 L16 承担。"""
+        self.write_draft("# 草稿\n\n### G1 🔴 📋 提交成功后的跳转分支未说明\n  1. a\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L18", _rules(findings))
+
+
+class L20TbdResolutionTests(LintTestBase):
+    """L20（MAJOR）：每个 ✏️ 占位的 TBDn 必须在 alignment-log 有核销留痕——
+    编造占位 = 伪造探测。只扫 tbd 凭据字段，不扫散文正文。"""
+
+    def write_draft(self, text: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "analysis-draft.md").write_text(text, encoding="utf-8")
+
+    def write_log(self, text: str):
+        (self.root / "_review" / "alignment-log.md").write_text(text, encoding="utf-8")
+
+    DRAFT = (
+        "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+        "### G1 🔴 📋 [✏️绘图层] 提交后跳转到哪（TBD1）\n  占位: TBD1\n  1. a\n  2. b\n  3. c\n")
+
+    def test_tbd_without_resolution_major(self):
+        """阳性：✏️ TBD1 在 alignment-log 无任何核销记录 → L20 MAJOR。"""
+        self.write_draft(self.DRAFT)
+        self.write_log("# 流水\n\n## Q1 其他题\n- 落点：§3.5\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        l20 = [(lv, d) for lv, r, d in findings if r == "L20"]
+        self.assertEqual(len(l20), 1, f"L20 未抓编造占位: {findings}")
+        self.assertEqual(l20[0][0], "MAJOR")
+        self.assertIn("TBD1", l20[0][1])
+
+    def test_tbd_with_resolution_silent(self):
+        """阴性：alignment-log 的核销流水含 TBD1 编号 → 不报。"""
+        self.write_draft(self.DRAFT)
+        self.write_log("# 流水\n\n## Q1 提交后跳转到哪（TBD1）\n- 人类原话：按步骤语义\n- 落点：§3.5\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L20", _rules(findings))
+
+    def test_reading_layer_only_not_scanned(self):
+        """防误伤：只有 📄 断层（无 tbd 凭据）→ L20 不扫。"""
+        self.write_draft(
+            "# 草稿\n\n```mermaid\nstateDiagram-v2\n    DRAFT --> SUCCESS: 直达\n```\n\n"
+            "### G1 🔴 📋 [📄阅读层] 费率口径未说明\n  1. a\n  2. b\n  3. c\n")
+        self.write_log("# 流水\n\n## Q1 费率口径\n- 落点：§3.7\n")
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L20", _rules(findings))
+
+    def test_no_log_not_fired(self):
+        """防误伤：alignment-log 不存在时无从对账，不报（未进核销阶段）。"""
+        self.write_draft(self.DRAFT)
+        findings, *_ = self.run_lint("# 报告\n")
+        self.assertNotIn("L20", _rules(findings))
+
+
 if __name__ == "__main__":
     unittest.main()

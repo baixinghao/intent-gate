@@ -41,6 +41,13 @@
       而状态机没画——实现层想到、图里漏画，产物自相矛盾。含别名解析
       state "…" as X / X : 描述 / 散文 X=ENUM；显式声明非生命周期字段 → 降 MINOR；
       无状态机不启用）
+  L16 ✏️零产出（MINOR。假探测案：断层清单有但 ✏️ 标注为零 = 绘图探测疑似未开机；
+      旧格式无层标注同报逼升级；有图但零清单的干净需求不报——评审 2026-08-14 ①
+      收紧触发，对齐 playbook「断层全部来自阅读层才是红旗」；无需画图声明豁免）
+  L18 层-型匹配（MAJOR。📄 断层命中图结构词表且无 落图: 声明——来源层不罚
+      （代码实证是加分项），罚的是图结构断层无图内落点；旧格式不启用）
+  L20 TBDn-核销对应（MAJOR。✏️ 占位的 TBDn 必须在 alignment-log 有核销留痕，
+      编造占位 = 伪造探测；只扫 tbd 凭据字段）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -50,6 +57,8 @@
 """
 import re
 from pathlib import Path
+
+from ..models import DRAFT_NO_DIAGRAM_RE
 
 KW_MAP = {
     "时序图": ["时序", "流程"],
@@ -91,6 +100,20 @@ L15_COLUMN_RE = r"^\s*(\w+)\s+\w+(?:\([^)]*\))?[^\n]*?COMMENT\s*'([^']*)'"
 # L15 豁免通道：字段确非生命周期（如路由过程字段）须在报告显式声明 → 降 MINOR
 L15_EXEMPT_RE = r"非生命周期|过程字段|不入状态机|非状态机字段|非状态机"
 
+# ---- 第二批：层标注审计（错题集 2026-08-14 假探测案：13 断层从答案键搬运、
+# 仅 2 个 TBD 过门票）——层是声明（可撒谎），TBDn/落图是凭据（可机械校验）。
+# 🔴 边界自知：机械检查只保证一致性、抬伪装成本，不证明来源——防泄题靠流程隔离
+# L18 图结构词表：断层文案命中且未声明图内落点才报——从 wiki/旧代码找到答案
+# 是加分项（代码实证），来源层不罚，罚的是图结构断层在图里没有落点
+L18_GRAPH_WORD_RE = r"状态|跳转|步骤|分支|超时|边|自环|流转|重跑|提交后|失败后|撤销|回退|补偿|重试|路由|推进"
+L18_LANDING_RE = r"状态机|时序|决策|BR-\d+|TBD\d+|步骤|边"  # 落图声明的锚点形态
+# draft 层标注解析（渲染格式见 engine.record_analysis）：表头 [✏️绘图层]/[📄阅读层]，
+# 凭据行 占位: TBDn（✏️必带）/ 出处: §x.y（📄建议）/ 落图: xxx（📄命中图结构词时必填）
+DRAFT_GAP_HEAD_RE = r"^###\s+G(\d+)\s+.*?\[(✏️绘图层|📄阅读层)\]\s*(.*)$"
+DRAFT_TBD_RE = r"^\s*占位:\s*(TBD\d+)"
+DRAFT_REF_RE = r"^\s*出处:\s*(§[\d.]+)"
+DRAFT_LANDING_RE = r"^\s*落图:\s*(.+)$"
+
 
 def _state_aliases(blocks, text):
     """状态名别名表：ID → 别名集合（调用侧统一 upper 比较）。
@@ -119,6 +142,43 @@ def _state_aliases(blocks, text):
     for m in prose_re.finditer(text):
         alias.setdefault(m.group(1), set()).add(m.group(2))
     return alias
+
+
+def _parse_draft_gaps(dtext: str) -> list[dict]:
+    """解析 draft 歧义点清单的层标注（[✏️绘图层]/[📄阅读层] + 占位/出处/落图凭据）。
+
+    返回 [{"num", "source", "tbd", "ref", "landing", "text"}]；
+    无层标注的旧格式清单返回 []——L18/L20 对旧格式不启用（防误伤），
+    由 L16 单独承担「逼升级」提示。
+    """
+    gaps, cur = [], None
+    for ln in dtext.split("\n"):
+        hm = re.match(DRAFT_GAP_HEAD_RE, ln)
+        if hm:
+            if cur:
+                gaps.append(cur)
+            cur = {"num": hm.group(1),
+                   "source": "✏️" if "✏️" in hm.group(2) else "📄",
+                   "tbd": None, "ref": None, "landing": None,
+                   "text": hm.group(3).strip()}
+            continue
+        if cur is not None:
+            if ln.startswith("### "):
+                gaps.append(cur)
+                cur = None
+                continue
+            m = re.match(DRAFT_TBD_RE, ln)
+            if m:
+                cur["tbd"] = m.group(1)
+            m = re.match(DRAFT_REF_RE, ln)
+            if m:
+                cur["ref"] = m.group(1)
+            m = re.match(DRAFT_LANDING_RE, ln)
+            if m:
+                cur["landing"] = m.group(1).strip()
+    if cur is not None:
+        gaps.append(cur)
+    return gaps
 
 
 def lint(summary_path: Path):
@@ -362,6 +422,55 @@ def lint(summary_path: Path):
                                  "analysis-draft 的图内仍有占位符，但待决清单无在飞题——"
                                  "疑似猜测填空或漏发题；若占位已消除请同步更新草稿"))
 
+    # ---- 第二批：层标注审计 L16/L18/L20（错题集 2026-08-14 假探测案）----
+    # 输入全部复用既有读取（draft=L13b、alignment-log=L7），纯增量。
+    # 无层标注的旧格式：L16 报 MINOR 逼升级，L18/L20 不启用（防对旧现场乱报）。
+    if draft_path.exists():
+        dtext = draft_path.read_text(encoding="utf-8")
+        dgaps = _parse_draft_gaps(dtext)
+        legacy_heads = re.findall(r"^###\s+G\d+\s", dtext, re.M)
+
+        # L16 ✏️零产出（MINOR）：draft 有断层清单（新格式层标注/旧格式 G 头）但
+        # 绘图层产出为零——探测疑似未开机。🔴 触发收紧（评审 2026-08-14 ①）：
+        # 只对「有清单」查 ✏️——图画得顺、真零断层的干净需求不误伤（playbook
+        # 原文：「断层全部来自阅读层」才是红旗，不是「零断层」是红旗）。
+        # 显式声明无需画图（词表单源 models.DRAFT_NO_DIAGRAM_RE）→ 静默
+        if (legacy_heads or dgaps) \
+                and not any(g["source"] == "✏️" for g in dgaps):
+            if not re.search(DRAFT_NO_DIAGRAM_RE, dtext):
+                findings.append(("MINOR", "L16",
+                                 "断层清单无绘图层产出（✏️=0）——绘图探测疑似未开机，"
+                                 "蓝军 R3 复核；无图需求须在草稿显式声明"
+                                 f"（{DRAFT_NO_DIAGRAM_RE}）"))
+
+        if dgaps:
+            # L18 层-型匹配（MAJOR）：📄 断层命中图结构词表但未声明图内落点 → 报。
+            # 从 wiki/旧代码找到答案是加分项（代码实证），来源层不罚——
+            # 罚的是图结构断层在图里没有落点（伪装阅读层绕过绘图探测）。
+            for g in dgaps:
+                if g["source"] != "📄" or not re.search(L18_GRAPH_WORD_RE, g["text"]):
+                    continue
+                if not (g.get("landing") and re.search(L18_LANDING_RE, g["landing"])):
+                    findings.append(("MAJOR", "L18",
+                                     f"G{g['num']}「{g['text'][:40]}」标 📄阅读层 但命中图结构词"
+                                     f"（{L18_GRAPH_WORD_RE}）且无图内落点声明——"
+                                     "疑似绘图层断层伪装成阅读层；确为阅读层发现请补 "
+                                     "落图: 声明（如 落图: 状态机 X-->Y 边 / 时序图步骤N / BR-n）"))
+
+            # L20 TBDn-核销对应（MAJOR）：每个 ✏️ 占位的 TBDn 必须在 alignment-log
+            # 找到含该编号的核销留痕——编造占位 = 伪造探测。只扫 tbd 凭据字段，
+            # 不扫散文正文（防误伤）
+            log_path2 = summary_path.parent / "_review" / "alignment-log.md"
+            if log_path2.exists():
+                log_text2 = log_path2.read_text(encoding="utf-8")
+                for g in dgaps:
+                    if g["source"] == "✏️" and g.get("tbd") \
+                            and not re.search(rf"\b{g['tbd']}\b", log_text2):
+                        findings.append(("MAJOR", "L20",
+                                         f"占位 {g['tbd']}（G{g['num']} {g['text'][:30]}）在 "
+                                         "alignment-log 无对应核销记录——占位只许代码实证/"
+                                         "人类拍板消除并留痕，编造占位即伪造探测"))
+
     # ---- L9 路径隔离：DDL 只落项目根 sql/，禁止内嵌 summary.md ----
     # 错题集 2026-08-12：SQL 全写进 summary.md 时 L6 的输入源（sql/*.sql）为空 →
     # L6 静默失明。机械半边补在这里：内嵌 CREATE TABLE 与「登记了 sql/ 路径但
@@ -459,6 +568,17 @@ def _contract_text() -> list[str]:
         f"（``{L15_ENUM_RE}``），枚举值须在状态机状态集或别名"
         "（`state \"...\" as X` / `X : 描述` / 散文 `X=ENUM`）中出现 → MAJOR。"
         f"豁免：报告显式声明该字段 `{L15_EXEMPT_RE}` → 降 MINOR；无状态机不启用",
+        f"- **L16 ✏️零产出**：draft 有断层清单（层标注/旧格式 G 头）但绘图层标注为零 → MINOR"
+        "（绘图探测疑似未开机，蓝军 R3 复核；旧格式同报逼升级；"
+        "有图但零清单的干净需求不报——断层全来自阅读层才是红旗，零断层不是）。"
+        f"豁免：草稿显式声明 `{DRAFT_NO_DIAGRAM_RE}` → 静默",
+        f"- **L18 层-型匹配**：📄 断层文案命中图结构词表（`{L18_GRAPH_WORD_RE}`）"
+        f"且无 落图: 声明（锚点形态 `{L18_LANDING_RE}`）→ MAJOR——"
+        "来源层不罚（代码实证是加分项），罚的是图结构断层无图内落点；"
+        "无层标注的旧格式不启用",
+        "- **L20 TBDn-核销对应**：draft 中每个 ✏️ 占位的 TBDn 须在 alignment-log "
+        "找到含该编号的核销记录 → 无则 MAJOR（编造占位 = 伪造探测；"
+        "只扫 tbd 凭据字段，不扫散文正文）",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -472,7 +592,7 @@ def run_lint(summary_path: str | Path) -> dict:
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L15 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L20 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:

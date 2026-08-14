@@ -287,7 +287,7 @@ class RecordJudgmentTests(unittest.TestCase):
         self.assertIn("status: blocked", draft)
         self.assertIn("intent_aligned: false", draft)
         self.assertIn("host agent", draft)
-        self.assertIn("🔴 🔧 防重无服务端机制", draft)
+        self.assertIn("🔴 🔧 [📄阅读层] 防重无服务端机制", draft)
 
     def test_record_rejects_invalid_enums(self):
         self.assertFalse(record_analysis(self.root, "f", ["State-Driven"], "complex", "蓝")["ok"])

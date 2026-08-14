@@ -64,3 +64,8 @@ class GateEvent:
     gate_token: str
     detail: dict
     at: float = field(default_factory=time.time)
+
+
+# 草稿「无需画图」豁免词表（单源定义，alignment.manager 与 analysis.lint 共用——
+# 错题集 2026-08-14 评审：私有常量跨模块导入是设计债，提升到本层共用）
+DRAFT_NO_DIAGRAM_RE = r"无需画图|无需绘图|不需要画图|无图可画|不触发任何图"

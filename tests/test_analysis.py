@@ -199,6 +199,69 @@ class EngineHardeningTests(AnalysisTestBase):
         self.assertTrue(ok["ok"])
 
 
+class RecordAnalysisLayerTagTests(AnalysisTestBase):
+    """第二批·层标注 schema（错题集 2026-08-14 假探测案）：层是声明、TBDn 是凭据。
+    校验口径：✏️ 无 tbd 拒收（绘图层必须带图内坐标）；📄 带 tbd 软归一
+    （忽略+警告，防死门禁）；source 缺省 📄 向后兼容；非法值拒收。"""
+
+    def _rec(self, gaps):
+        from intent_gate.analysis.engine import record_analysis
+        return record_analysis(
+            self.root, "layer-f", ["State-Driven"], "complex", "🔴", gaps=gaps)
+
+    def _gap(self, **kw):
+        g = {"gap": "提交后跳转到哪（TBD1）", "severity": "🔴", "category": "📋",
+             "options": ["a", "b", "c"]}
+        g.update(kw)
+        return g
+
+    def test_drawing_layer_without_tbd_rejected(self):
+        """✏️绘图层 缺 tbd 凭据 → 拒收（层是声明，TBDn 是图内坐标证据）。"""
+        r = self._rec([self._gap(source="✏️")])
+        self.assertFalse(r["ok"])
+        self.assertIn("tbd", r["reason"])
+
+    def test_drawing_layer_with_tbd_accepted_and_rendered(self):
+        """✏️ + tbd → 收下，draft 渲染带层标注与占位凭据。"""
+        r = self._rec([self._gap(source="✏️", tbd="TBD1")])
+        self.assertTrue(r["ok"])
+        draft = (self.root / ".harness" / "requests" / "layer-f"
+                 / "_review" / "analysis-draft.md").read_text("utf-8")
+        self.assertIn("[✏️绘图层]", draft)
+        self.assertIn("占位: TBD1", draft)
+
+    def test_reading_layer_with_tbd_soft_normalized(self):
+        """📄 + tbd → 软归一：不拒收、忽略 tbd、warnings 留痕，draft 无占位行。"""
+        r = self._rec([self._gap(source="📄", tbd="TBD9")])
+        self.assertTrue(r["ok"])
+        self.assertTrue(any("已忽略" in w for w in r["warnings"]))
+        draft = (self.root / ".harness" / "requests" / "layer-f"
+                 / "_review" / "analysis-draft.md").read_text("utf-8")
+        self.assertNotIn("占位: TBD9", draft)
+
+    def test_source_defaults_to_reading_layer(self):
+        """向后兼容：旧调用无 source → 默认 📄，不炸。"""
+        r = self._rec([self._gap()])
+        self.assertTrue(r["ok"])
+        draft = (self.root / ".harness" / "requests" / "layer-f"
+                 / "_review" / "analysis-draft.md").read_text("utf-8")
+        self.assertIn("[📄阅读层]", draft)
+
+    def test_illegal_source_rejected(self):
+        """source 只收 📄/✏️，其余拒收。"""
+        r = self._rec([self._gap(source="🔵")])
+        self.assertFalse(r["ok"])
+        self.assertIn("source", r["reason"])
+
+    def test_drawing_gap_text_without_tbd_warns(self):
+        """✏️ gap 文本未携带 TBDn 编号 → 收下但 warnings 提醒（L20 靠文本对账）。"""
+        g = self._gap(source="✏️", tbd="TBD3")
+        g["gap"] = "提交后跳转到哪"
+        r = self._rec([g])
+        self.assertTrue(r["ok"])
+        self.assertTrue(any("TBD3" in w for w in r["warnings"]))
+
+
 class DocxInputTests(AnalysisTestBase):
     """输入契约加固：.docx 支持、相对路径解析、二进制/编码拒绝（全部带指引）。"""
 

@@ -484,7 +484,12 @@ def record_analysis(
     落盘后宿主对 gaps 逐题 dispatch_question 分发（单一登记路径，不重复开闸）。
 
     gaps 元素: {"gap": str, "severity": "🔴"|"🟡", "category": "📋"|"🔧",
-               "options": [至少3个], "recommend": str(可选)}
+               "options": [至少3个], "recommend": str(可选),
+               "source": "📄"|"✏️"(可选，缺省 📄——断层来源层，双层对齐纪律),
+               "tbd": "TBDn"(✏️ 必填——图内坐标凭据；📄 携带则忽略并警告，不拒收),
+               "ref": "§x.y"(📄 建议——阅读层出处),
+               "landing": str(可选——📄 断层命中图结构词时的图内落点声明，
+                             如「状态机 X-->Y 边」；lint L18 复核)}
     """
     from ..alignment.store import ReviewStore
 
@@ -498,6 +503,7 @@ def record_analysis(
     if bad:
         return {"ok": False, "reason": f"非法型态: {sorted(bad)}（只支持 {sorted(valid_patterns)}）"}
     gaps = list(gaps or [])
+    warnings = []
     for i, g in enumerate(gaps):
         if g.get("severity") not in ("🔴", "🟡") or g.get("category") not in ("📋", "🔧"):
             return {"ok": False, "reason": f"gaps[{i}] 的 severity/category 非法"}
@@ -507,6 +513,24 @@ def record_analysis(
         # 落账时不拦，开闸时才被拒 = 账面上挂了一道永远发不出去的题
         if len(g.get("options") or []) < 3 and not str(g.get("recommend", "")).strip():
             return {"ok": False, "reason": f"gaps[{i}] 至少 3 个候选选项（有推荐项可放宽）"}
+        # 双层来源标注（错题集 2026-08-14 假探测案）：层是声明、TBDn 是凭据
+        source = g.get("source") or "📄"  # 缺省 📄——向后兼容，不炸旧调用
+        if source not in ("📄", "✏️"):
+            return {"ok": False, "reason": f"gaps[{i}] 的 source 非法: {source}（只支持 📄阅读层/✏️绘图层）"}
+        g["source"] = source
+        tbd = str(g.get("tbd") or "").strip()
+        if source == "✏️" and not re.fullmatch(r"TBD\d+", tbd):
+            return {"ok": False, "reason": f"gaps[{i}] 标了 ✏️绘图层 但缺 tbd 凭据（图内坐标，如 tbd=\"TBD1\"）"}
+        if source == "📄" and tbd:
+            # 软归一（防死门禁）：阅读层无图内占位——忽略 tbd 并警告，不拒收
+            g.pop("tbd", None)
+            warnings.append(f"gaps[{i}] 标 📄阅读层 但携带 tbd={tbd}，已忽略；"
+                            "若实为绘图层断层请改 source=\"✏️\"")
+        if source == "✏️":
+            g["tbd"] = tbd
+            if tbd not in str(g.get("gap", "")):
+                warnings.append(f"gaps[{i}] 是 ✏️绘图层断层，建议 gap 文本携带 {tbd} 编号"
+                                "（dispatch 透传到 alignment-log 后，L20 靠文本里的编号对账）")
 
     tools = list(selected_tools or [])
     status = "blocked" if confidence == "🔴" else "draft"
@@ -538,7 +562,17 @@ def record_analysis(
     lines += ["## 歧义点清单（宿主判定）", ""]
     if gaps:
         for i, g in enumerate(gaps, 1):
-            lines.append(f"### G{i} {g['severity']} {g['category']} {g['gap']}")
+            # 层标注渲染（错题集 2026-08-14）：层是声明、凭据可机检——
+            # ✏️ 必带 占位: TBDn（图内坐标）；📄 可带 出处: §x.y；📄 命中图结构
+            # 词表时靠 落图: 声明咬合点（lint L18 复核），防图结构断层伪装阅读层
+            layer = "✏️绘图层" if g.get("source") == "✏️" else "📄阅读层"
+            lines.append(f"### G{i} {g['severity']} {g['category']} [{layer}] {g['gap']}")
+            if g.get("source") == "✏️":
+                lines.append(f"  占位: {g['tbd']}")
+            elif g.get("ref"):
+                lines.append(f"  出处: {g['ref']}")
+            if g.get("landing"):
+                lines.append(f"  落图: {g['landing']}")
             for j, o in enumerate(g.get("options") or [], 1):
                 lines.append(f"  {j}. {o}")
             tail = len(g.get("options") or []) + 1
@@ -573,5 +607,6 @@ def record_analysis(
         "intent_aligned": False,
         "registered_gaps": len(gaps),
         "next_actions": next_actions,
+        "warnings": warnings,
         "note": "判断已落账；gaps 尚未开闸——逐题 dispatch_question 完成登记分发",
     }
