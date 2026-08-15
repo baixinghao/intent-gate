@@ -43,6 +43,8 @@ _GENERATE_BRIEF = """你是需求「{feature}」的 Phase B 生成 subagent。�
 - 生成中新发现的 gap：整理成清单随结论带回，禁止自行假设填掉。
 
 【禁止再派子代理】你是叶子执行者，所有生成亲自动手。
+（此纪律只约束你。宿主派你这件事必须发生——宿主不得以「亲自动手等价叶子执行者」为由
+在宿主层直行生成：那会把 Phase B 的读写量堆进宿主上下文，正是相位拆分要防的。）
 
 【图演化纪律】summary 的状态机/时序图/决策表必须由 draft 草稿图演化而来，
 禁止凭空重画；draft 图内占位（???/TBDn）的消除必须能指回 alignment-log 核销记录。
@@ -91,12 +93,26 @@ def compute_phase(workspace_root: str | Path, feature: str) -> dict:
             owes.append(f"{inf_pending} 条推断未确认")
         if inbox_new:
             owes.append(f"{inbox_new} 条 inbox 答案未领取")
+        # A0 并行探测驱动：草稿尚无绘图层产出（无 mermaid 块）时，
+        # 先并行派两个探测子代理，返回合并后再发题——不靠 playbook 文本自觉。
+        probe_hint = ""
+        if store.draft_file.exists():
+            try:
+                dtext = store.draft_file.read_text(encoding="utf-8")
+            except OSError:
+                dtext = ""
+            if "```mermaid" not in dtext:
+                probe_hint = (
+                    "；且草稿尚无绘图层产出——应并行派两个子代理补探测"
+                    "（explore 阅读层扫雷 + draw 硬画带 TBDn 草稿图），"
+                    "返回后主对话层合并去重再发题"
+                )
         return {
             "phase": "align",
             "next_action": (
                 f"意图未齐（{'，'.join(owes)}）：先完成对齐——未决题逐题答完调 "
                 "resolve_question 核销、推断调 confirm_inferences 确认、"
-                "inbox 调 collect_answers 领取注入"
+                f"inbox 调 collect_answers 领取注入{probe_hint}"
             ),
             "brief": None,
             **base,

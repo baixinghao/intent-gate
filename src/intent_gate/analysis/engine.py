@@ -403,12 +403,21 @@ def _fresh(
         **pattern,
         **gate,
         "gaps": gaps,
-        "next_actions": _fresh_next_actions(gaps, confidence),
+        "next_actions": _fresh_next_actions(gaps, confidence, pattern["complexity"]),
         "note": "歧义点为机械初筛结果，宿主 agent 应做语义复核后再 dispatch_question",
     }
 
 
-def _fresh_next_actions(gaps: list[dict], confidence: str) -> list[str]:
+_A0_PROBE_HINT = (
+    "A0 并行探测（complex 应执行）：并行派两个子代理——explore 阅读层扫雷 "
+    "（九类清单）+ draw 硬画带 TBDn 草稿图（失败边四类必查），返回后主对话层"
+    "合并去重再发题"
+)
+
+
+def _fresh_next_actions(
+    gaps: list[dict], confidence: str, complexity: str
+) -> list[str]:
     actions = []
     red = [g for g in gaps if g["severity"] == "🔴"]
     yellow = [g for g in gaps if g["severity"] == "🟡"]
@@ -420,6 +429,8 @@ def _fresh_next_actions(gaps: list[dict], confidence: str) -> list[str]:
         actions.append(
             f"🟡 dispatch_question 或 record_inference: {g['gap']}（类别 {g['category']}）"
         )
+    if complexity == "complex":
+        actions.insert(0, _A0_PROBE_HINT)
     if confidence == "🟢":
         actions.append("置信度绿灯 → 可直接进入 generate_artifacts")
     if not gaps:
@@ -591,6 +602,8 @@ def record_analysis(
     draft.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     next_actions = []
+    if complexity == "complex":
+        next_actions.append(_A0_PROBE_HINT)
     red = [g for g in gaps if g["severity"] == "🔴"]
     if red:
         next_actions.append(
