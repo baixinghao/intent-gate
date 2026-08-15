@@ -63,6 +63,9 @@ jobs:
 
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # 允许重跑：版本已发布过时跳过而非报错（如 github-release 修复后重发同一 tag）
+          skip-existing: true
 
   github-release:
     needs: build
@@ -70,6 +73,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # gh CLI 依赖 .git 里的 remote 推断目标仓库，必须先 checkout
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: dist
