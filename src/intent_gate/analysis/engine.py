@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ..workspace import resolve_under_root
 from .docx import extract_text
 
 # ------------------------------------------------------------ 信号词表
@@ -343,10 +344,7 @@ def _fresh(
             "ok": False,
             "reason": f"需求 {feature} 无既有现场，从0解析必须提供 prd_path",
         }
-    prd = Path(prd_path)
-    if not prd.is_absolute():
-        # 相对路径统一按 workspace_root 解析（与账本落盘同基准，避免 cwd 错位）
-        prd = Path(workspace_root) / prd
+    prd = resolve_under_root(workspace_root, prd_path)
     if not prd.exists():
         return {"mode": "fresh", "ok": False,
                 "reason": f"PRD 文件不存在: {prd}（相对路径按 workspace_root 解析；"

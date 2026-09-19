@@ -65,6 +65,13 @@ These thoughts mean STOP — you're rationalizing your way around the gate:
   wording, verbatim. Interpretation goes in a separate field.
 - 🔴 Files are the source of truth (`.harness/requests/{feature}/_review/`);
   chat channels are only transport. Process restarts lose nothing.
+- 🔴 Every tool takes an optional `project_path` (the root holding `.harness/`).
+  On a host that multiplexes workspaces through one long-lived MCP process
+  (DeepSeek Harness, multi-root IDEs), omitting it falls back to the server's
+  **startup root** — which is NOT necessarily the workspace you are in, so the
+  ledger silently lands in another project and reads come back empty. Pass
+  `project_path` explicitly, and call `describe_workspace` first when unsure
+  which root is in effect.
 - 🔴 `approved` status is never self-granted. Readiness comes from the checklist,
   not from your confidence.
 

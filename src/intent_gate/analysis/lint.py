@@ -67,6 +67,7 @@ import re
 from pathlib import Path
 
 from ..models import DRAFT_NO_DIAGRAM_RE
+from ..workspace import resolve_under_root
 
 KW_MAP = {
     "时序图": ["时序", "流程"],
@@ -683,9 +684,17 @@ def _contract_text() -> list[str]:
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
-def run_lint(summary_path: str | Path) -> dict:
-    """执行 lint 并落盘 _review/lint-report.md，返回结构化结果。"""
+def run_lint(summary_path: str | Path, workspace_root: str | Path | None = None) -> dict:
+    """执行 lint 并落盘 _review/lint-report.md，返回结构化结果。
+
+    workspace_root：summary_path 为相对路径时的解析基准（MCP 工具层传入本次
+    生效的项目根）。缺省 None 保持旧行为（按进程 cwd 解析），仅供既有测试与
+    内部调用兼容——🔴 MCP 工具面必须传：cwd 是宿主进程的启动目录，与工作区
+    无关，不传就会静默检查到别的项目去。
+    """
     summary_path = Path(summary_path)
+    if workspace_root is not None:
+        summary_path = resolve_under_root(workspace_root, summary_path)
     if not summary_path.exists():
         return {"ok": False, "reason": f"summary 不存在: {summary_path}"}
     findings, edges, table_matrix, anchors, sections = lint(summary_path)

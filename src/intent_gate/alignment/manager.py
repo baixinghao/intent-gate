@@ -238,6 +238,15 @@ class AlignmentManager:
     def __init__(self, workspace_root: str | Path) -> None:
         self._root = Path(workspace_root)
 
+    @property
+    def workspace_root(self) -> Path:
+        """本管家绑定的项目根。
+
+        工具层据此取缺省根；带 project_path 的调用则按解析结果现造一个新管家
+        （本类无状态，只持一个 Path，现造是零成本）。
+        """
+        return self._root
+
     def _store(self, feature: str) -> ReviewStore:
         return ReviewStore(self._root, feature)
 

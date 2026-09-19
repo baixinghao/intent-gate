@@ -10,6 +10,8 @@
 import re
 from pathlib import Path
 
+from ..workspace import resolve_under_root
+
 STOP = {"步骤", "转移", "规则", "决策表", "时序图", "状态机", "字段", "初始化", "提交", "修改期数"}
 
 
@@ -99,9 +101,16 @@ def locate(fragment: str, sections, br_sec, mermaid_hits):
     return list(dict.fromkeys(hits))  # 去重保序
 
 
-def run_mapper(summary_path: str | Path) -> dict:
-    """生成 _review/mapping-draft.md，返回结构化结果。"""
+def run_mapper(summary_path: str | Path, workspace_root: str | Path | None = None) -> dict:
+    """生成 _review/mapping-draft.md，返回结构化结果。
+
+    workspace_root：summary_path 为相对路径时的解析基准（MCP 工具层传入本次
+    生效的项目根）。缺省 None 保持旧行为（按进程 cwd 解析），仅供既有测试与
+    内部调用兼容——🔴 MCP 工具面必须传，理由同 run_lint。
+    """
     summary_path = Path(summary_path)
+    if workspace_root is not None:
+        summary_path = resolve_under_root(workspace_root, summary_path)
     if not summary_path.exists():
         return {"ok": False, "reason": f"summary 不存在: {summary_path}"}
     text = summary_path.read_text(encoding="utf-8")

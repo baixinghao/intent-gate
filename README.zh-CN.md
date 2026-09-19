@@ -287,7 +287,7 @@ claude plugin install intent-gate@baixinghao-plugins
 | 宿主 | 状态 |
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
-| DeepSeek Harness（`install --target dsh`） | ✅ 已验证——MCP 工具经 `dsh-mcp-client` 桥接（13 个工具握手实测）+ skills 热加载进 `$DSH_HOME/skills`；安装器合并/幂等逻辑有单元测试 |
+| DeepSeek Harness（`install --target dsh`） | ✅ 已验证——MCP 工具经 `dsh-mcp-client` 桥接（14 个工具握手实测）+ skills 热加载进 `$DSH_HOME/skills`；安装器合并/幂等逻辑有单元测试 |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
@@ -369,8 +369,14 @@ intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + s
 #    skills 从 $DSH_HOME/skills 热加载，账本落在 {工作区}/.harness/requests/
 ```
 
-两个 DSH 专属说明：
+三个 DSH 专属说明：
 
+- **工作区解析**：每个工具都接受可选参数 `project_path`。省略时回落 server 的**启动根**
+  （`HG_WORKSPACE_ROOT`，否则进程 cwd）——在"一个常驻 MCP 进程服务多个工作区"的宿主上
+  （DSH、多根工作区 IDE），它**未必**是你当前所在的工作区，账本会静默落到别的项目去。
+  宿主多路复用工作区时请显式传 `project_path`；先调 `describe_workspace` 看清当前生效的
+  是哪个根。相对路径（`prd_path`、`summary_path`）一律按该根解析，**永不**按进程 cwd。
+  刻意不做"设一次全局生效"的开关：宿主会并发跑 subagent，全局可变状态会让它们互相污染。
 - DSH 的 `dsh-mcp-client` 只桥接 MCP **工具**、不桥接 MCP **prompt**，
   所以 playbook 以 `doc-analysis-playbook` skill 形式一并安装
   （同一份文本，全文携带，末尾标注权威来源）——开工前先完整读一遍；
@@ -392,7 +398,7 @@ intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + s
 
 - **文档解析边界**：只支持 .docx；`.doc` 老格式 / `.pdf` / `.xlsx` 等二进制请先转文本（Word「另存为 → .docx 或 纯文本(.txt)」，PDF 导出/另存为文本）
 - MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制，DSH 经 `install --target dsh` 获得全量支持（工具 + skills）**——其他客户端只有 server 一半
-- 账本写在 `{workspace_root}/.harness/requests/` 下，会被 git 跟踪——介意入库请加 `.gitignore`
+- 账本写在 `{workspace_root}/.harness/requests/` 下，会被 git 跟踪——介意入库请加 `.gitignore`。这个根由每次调用的 `project_path` 决定，省略则回落 server 启动根（见上文 DSH 工作区解析说明）
 
 ## 开发（克隆仓库）
 
@@ -412,6 +418,7 @@ python -m unittest discover -s tests -v   # 核心逻辑测试（无需任何凭
 ```
 src/intent_gate/
 ├── config.py / logging.py        # 配置（HG_* 环境变量，零凭据）、日志
+├── workspace.py                  # 每次调用的工作区解析（project_path → 启动根）
 ├── models.py / security.py       # 纯 stdlib 核心：token、白名单、回复解析、限流
 ├── __main__.py                   # MCP 入口（stdio/SSE）
 ├── alignment/                    # 意图对齐子系统（file-in-the-loop，非阻塞）
@@ -424,7 +431,7 @@ src/intent_gate/
 │   ├── engine.py                 #   现场判定 / 宿主判断落账
 │   ├── lint.py                   #   分析报告机械检查器（L0-L13 + 三矩阵）
 │   ├── mapper.py                 #   意图注入映射表锚点定位
-│   └── tools.py                  #   MCP 工具注册（分析工具 + playbook prompt）
+│   └── tools.py                  #   MCP 工具注册（5 个工具：含 describe_workspace + playbook prompt）
 skills/
 ├── using-intent-gate/             # 入口纪律：何时升级人工、两个可选能力的位置
 ├── requirement-alignment/        # 意图对齐工作流纲要 → 指向 MCP prompt

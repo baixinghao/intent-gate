@@ -334,7 +334,7 @@ Every variable has a default — **zero config to use**; copy `.env.example` to 
 | Host | Status |
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
-| DeepSeek Harness（`install --target dsh`） | ✅ Verified——MCP tools via `dsh-mcp-client` (13 tools handshake-tested) + skills hot-loading into `$DSH_HOME/skills`; installer merge/idempotency unit-tested |
+| DeepSeek Harness（`install --target dsh`） | ✅ Verified——MCP tools via `dsh-mcp-client` (14 tools handshake-tested) + skills hot-loading into `$DSH_HOME/skills`; installer merge/idempotency unit-tested |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
@@ -421,8 +421,18 @@ intent-gate install --target dsh       # 2) wire the harness — patch merge + s
 #    {workspace}/.harness/requests/
 ```
 
-Two DSH-specific notes:
+Three DSH-specific notes:
 
+- **Workspace resolution**: every tool takes an optional `project_path`. Omit it
+  and the server falls back to its **startup root** (`HG_WORKSPACE_ROOT`, else the
+  process cwd) — on a host that serves many workspaces from one long-lived MCP
+  process (DSH, multi-root IDEs), that is *not* necessarily the workspace you are
+  in, and the ledger silently lands in the wrong project. Pass `project_path`
+  explicitly whenever your host multiplexes workspaces, and call
+  `describe_workspace` first to see which root is actually in effect. Relative
+  paths (`prd_path`, `summary_path`) resolve against that root, **never** the
+  process cwd. There is deliberately no "set once, global" switch: hosts run
+  subagents concurrently, and global mutable state would cross-contaminate them.
 - DSH's `dsh-mcp-client` bridges MCP **tools** but not MCP **prompts**, so
   the playbook is installed as the `doc-analysis-playbook` skill (same text,
   full content, authoritative source annotated at the end) — read it in full
@@ -446,7 +456,7 @@ chat dialog as fallback).
 
 - **Document-parsing boundary**: .docx only; `.doc` legacy / `.pdf` / `.xlsx` and other binaries must be converted first (Word「Save As → .docx or Plain Text (.txt)」, PDF export/save-as text)
 - The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is Claude Code-specific; DeepSeek Harness gets the full surface via `install --target dsh`** — other clients get the server half only
-- The ledger lives under `{workspace_root}/.harness/requests/` and is tracked by git — add a `.gitignore` entry if you don't want it committed
+- The ledger lives under `{workspace_root}/.harness/requests/` and is tracked by git — add a `.gitignore` entry if you don't want it committed. Which root that is comes from `project_path` per call, falling back to the server's startup root (see the DSH workspace-resolution note above)
 
 ## Development (from a clone)
 
@@ -468,6 +478,7 @@ Plugin-form skeleton: see [docs/PLUGIN.md](docs/PLUGIN.md).
 ```
 src/intent_gate/
 ├── config.py / logging.py        # config (HG_* env vars, zero credentials), logging
+├── workspace.py                  # per-call workspace resolution (project_path → startup root)
 ├── models.py / security.py       # pure-stdlib core: tokens, allowlist, reply parsing, rate limiting
 ├── __main__.py                   # MCP entrypoint (stdio/SSE)
 ├── alignment/                    # intent-alignment subsystem (file-in-the-loop, non-blocking)
@@ -480,7 +491,7 @@ src/intent_gate/
 │   ├── engine.py                 #   gap adjudication / host-judgment bookkeeping
 │   ├── lint.py                   #   mechanical checker for analysis reports (L0-L13 + three matrices)
 │   ├── mapper.py                 #   anchor locating for the intent-injection mapping table
-│   └── tools.py                  #   MCP tool registration (analysis tools + playbook prompt)
+│   └── tools.py                  #   MCP tool registration (5 tools: incl. describe_workspace + playbook prompt)
 skills/
 ├── using-intent-gate/            # entry discipline: when to escalate, where the optional capabilities live
 ├── requirement-alignment/        # intent-alignment workflow outline → points to the MCP prompt

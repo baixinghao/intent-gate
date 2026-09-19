@@ -30,3 +30,13 @@ _ref/
 
 # Local scratch
 .tmp-redblue-drill/
+.tmp-test/
+.tmp-test2/
+tmpreview/
+tmpx/
+
+# Tool caches (these also self-ignore via a "*" .gitignore the tool writes;
+# listed explicitly so they never depend on that behavior)
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
