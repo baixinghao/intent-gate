@@ -24,6 +24,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from ..logging import get_logger
+from ..phase_rules import with_phase_rules
 from ..workspace import resolve_root
 from .manager import AlignmentManager
 
@@ -72,10 +73,11 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         返回 token，后续凭 token 收答案。
         project_path: 本次调用生效的项目根（.harness 所在）。省略则用进程启动时的
         workspace_root；宿主服务多个工作区时必须显式传，否则账本会落到启动目录去。"""
-        return await _manager(project_path).dispatch_question(
-            feature, gap, category, options, recommend, targets, at_user_ids,
-            severity, coordinate=coordinate, reflow=reflow,
-        )
+        return with_phase_rules(
+            await _manager(project_path).dispatch_question(
+                feature, gap, category, options, recommend, targets, at_user_ids,
+                severity, coordinate=coordinate, reflow=reflow,
+            ), "dispatch_question", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def collect_answers(feature: str, project_path: str | None = None) -> list[dict]:
@@ -85,7 +87,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         只领不核销，题会一直挂在待决清单上（这是纪律，不是缺陷）。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传，否则读不到本项目的现场。"""
-        return _manager(project_path).collect_answers(feature)
+        return with_phase_rules(
+            _manager(project_path).collect_answers(feature),
+            "collect_answers", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def resolve_question(
@@ -106,9 +110,10 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         成功核销的返回含 phase 块（相位机判定：align/generate/gate/deliverable）。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传，否则流水写错项目。"""
-        return _manager(project_path).resolve_question(
-            feature, token, answer, responder, interpretation, landing, source
-        )
+        return with_phase_rules(
+            _manager(project_path).resolve_question(
+                feature, token, answer, responder, interpretation, landing, source
+            ), "resolve_question", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def record_inference(
@@ -122,7 +127,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         会话末 confirm_inferences 批量点头。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传。"""
-        return _manager(project_path).record_inference(feature, gap, conclusion, basis)
+        return with_phase_rules(
+            _manager(project_path).record_inference(feature, gap, conclusion, basis),
+            "record_inference", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def confirm_inferences(
@@ -135,7 +142,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         确认记录会写进 alignment-log，未确认的推断禁止标 intent_aligned: true。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传。"""
-        return _manager(project_path).confirm_inferences(feature, decisions, confirmer)
+        return with_phase_rules(
+            _manager(project_path).confirm_inferences(feature, decisions, confirmer),
+            "confirm_inferences", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     async def rebroadcast_pending(feature: str, project_path: str | None = None) -> dict:
@@ -145,7 +154,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         group_rebroadcast（读同一份清单）。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传，否则对账的是别的项目。"""
-        return await _manager(project_path).rebroadcast_pending(feature)
+        return with_phase_rules(
+            await _manager(project_path).rebroadcast_pending(feature),
+            "rebroadcast_pending", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def list_pending_questions(feature: str, project_path: str | None = None) -> dict:
@@ -154,7 +165,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——🔴 省略时若该需求不在缺省根下，会返回"0 题"的空现场而非报错，
         看起来像"意图已齐"，务必配合 describe_workspace 确认根对了再信这个数。"""
-        return _manager(project_path).list_pending(feature)
+        return with_phase_rules(
+            _manager(project_path).list_pending(feature),
+            "list_pending_questions", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def abandon_question(
@@ -168,7 +181,9 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         废弃记录留在清单里，可追溯。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传。"""
-        return _manager(project_path).abandon_question(feature, token, reason)
+        return with_phase_rules(
+            _manager(project_path).abandon_question(feature, token, reason),
+            "abandon_question", resolve_root(project_path, default_root), feature)
 
     @mcp.tool()
     def abandon_inference(
@@ -178,6 +193,8 @@ def register_alignment_tools(mcp: FastMCP, align: AlignmentManager) -> None:
         """废弃一条未确认的 AI 推断（推断前提已不成立/用户弃用）。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传。"""
-        return _manager(project_path).abandon_inference(feature, inference_id, reason)
+        return with_phase_rules(
+            _manager(project_path).abandon_inference(feature, inference_id, reason),
+            "abandon_inference", resolve_root(project_path, default_root), feature)
 
     log.info("alignment tools registered (9 tools)")

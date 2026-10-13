@@ -76,7 +76,7 @@ intent-gate/
 │   └── analysis/                # 需求分析子系统
 │       ├── __init__.py          # 包标识
 │       ├── playbook.md          # 【法律文本】需求分析 playbook 全文（Step 0 灯态 /
-│       │                        #   Step 0.5 九类歧义点+精准提问 / Step 1 型态判定 /
+│       │                        #   Step 0.5 十一类歧义点+精准提问 / Step 1 型态判定 /
 │       │                        #   Step 3 mermaid 规范 / Step 4 交付门禁），
 │       │                        #   经 MCP prompt doc_analysis_playbook 全文分发
 │       ├── engine.py            # analyze_request（fresh 机械初筛 / resume 现场续跑）

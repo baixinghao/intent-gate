@@ -56,6 +56,10 @@
       （缺省 2）且 alignment-log 无 ESCALATE 人类裁决留痕——dispatch 的熔断
       挡「开新一轮」，本规则兜「手写改爆 frontmatter」；旧现场无 reflow_round
       字段不报）
+  L23 禁用表述反查（summary「禁用表述登记」区的 FORBIDDEN token 在正文残留
+      = CRITICAL；alignment-log 有 FORBIDDEN 登记行但 summary 漏收 = MAJOR。
+      错题集 withdrawStatus=INVALID 案：批复已否决的表述文字层改了、结构层
+      （状态机边动作/规则表）还在用旧口径；登记行自身豁免，log 无登记行不启用）
 
 矩阵生成（蓝军/人工只填判断列，禁止手建）：
   矩阵① 转移清单  矩阵② 表读写矩阵  矩阵③ 引用核对清单
@@ -94,6 +98,9 @@ L10_EXEMPT_RE = r"无新增表|无表变更|无需建表|复用旧表|复用现�
 # 建表语句形态（表名+开括号）才算内嵌 DDL；散文提及「CREATE TABLE 语句…」不误伤
 L9_EMBED_DDL_RE = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?\w+`?\s*\("
 L9_SQL_REF_RE = r"\bsql/"              # 登记了 SQL 相对路径（playbook §3.4 要求的格式）；\b 锚定防 sqlite/、mysql/ 误报
+# L9 第三段（逐文件对账）抽登记的具体 SQL 文件：只收 sql/xxx.sql 形态，\b 锚定防
+# mysql/ 误伤（同上行教训）；目录级登记（裸 sql/）归第二段管，本段不重复立案
+L9_SQL_FILE_RE = r"\bsql/([\w.-]+\.sql)"
 # L13 占位符（双层意图对齐·绘图层探测器）：画图卡壳处的标准占位形态是
 #   state "???待确认" as TBDn（节点）/ --> TBDn（边）——TBDn 命中 [\w一-鿿]+ 字符集，
 #   边解析零噪音；裸 ??? 仅作兼容扫描（字符集不含 ?，裸 ??? 边会被静默吃掉）。
@@ -129,6 +136,16 @@ L21_ALIAS_RE = r'state\s+"[^"]+"\s+as\s+([\w一-鿿]+)'
 L21_DECL_RE = r"^[ \t]*([\w一-鿿]+)[ \t]*:"
 # L22 缺省回流预算（与 phase.DEFAULT_REFLOW_BUDGET 同值；lint 保持零依赖单源在常量）
 L22_DEFAULT_REFLOW_BUDGET = 2
+
+# ---- 第四批：否决语义登记反查（错题集 withdrawStatus=INVALID 案：人类已作废某题
+# 批复，文字层改了，状态机边动作仍写旧口径——被否表述必须登记为禁用 token 并反查）----
+# L23 登记行形态：summary「禁用表述登记」区与 alignment-log 核销处两侧同构（playbook
+# 约束第 22 条）；token 必须精确到可唯一指认的表述（如 withdrawStatus=INVALID），
+# 🔴 禁止宽词（如单个 INVALID）——判定按 re.escape 原样字符串全文反查，宽词会误伤
+L23_FORBIDDEN_RE = r"^\s*-?\s*FORBIDDEN:\s*(\S+)"
+# 否决语义触发词表：仅用于契约披露与写作提示，不参与机械判定——判定只看 FORBIDDEN
+# 登记行（散文里引用「禁止/不改」等词是合法表述，不构成登记义务）
+L23_VETO_RE = r"不置|禁止|作废|不予|不改"
 
 
 def _draft_meta(dtext: str) -> dict:
@@ -565,6 +582,41 @@ def lint(summary_path: Path):
                                      "ESCALATE 人类裁决留痕——回流超预算必须由人类"
                                      "逐条裁决并留痕，禁止静默继续回流"))
 
+    # ---- 第四批：L23 禁用表述反查（错题集 withdrawStatus=INVALID 案）----
+    # 批复含否决语义时，被否表述必须登记为 FORBIDDEN token（playbook 约束第 22 条）——
+    # 否则文字层改了、结构层（状态机边动作/规则表）还在用旧口径，产物自相矛盾。
+    # L23a（CRITICAL）：summary 登记的 token 按 re.escape 原样字符串全文反查，
+    # 正文残留即报；登记行自身豁免（按行过滤含 FORBIDDEN: 的行）；
+    # token <4 字符不扫（防爆——宽词误伤由登记纪律「禁止宽词」在源头拦截）。
+    # L23b（MAJOR）：alignment-log 有 FORBIDDEN 登记行但 summary 漏收该 token——
+    # log 不存在或无登记行不启用（旧现场零误报）。
+    s_forbidden = set()
+    for ln in lines:
+        fm = re.match(L23_FORBIDDEN_RE, ln)
+        if fm:
+            s_forbidden.add(fm.group(1))
+    for tok in sorted(s_forbidden):
+        if len(tok) < 4:
+            continue
+        hits = [ln.strip() for ln in lines
+                if "FORBIDDEN:" not in ln and re.search(re.escape(tok), ln)]
+        if hits:
+            findings.append(("CRITICAL", "L23",
+                             f"禁用表述 {tok} 在正文残留 {len(hits)} 处"
+                             f"（如「{hits[0][:50]}」）——批复已否决的表述必须逐处"
+                             "清除（登记行自身豁免；playbook 约束第 22 条）"))
+    log_path4 = summary_path.parent / "_review" / "alignment-log.md"
+    if log_path4.exists():
+        log_text4 = log_path4.read_text(encoding="utf-8")
+        l_forbidden = {m.group(1)
+                       for m in re.finditer(L23_FORBIDDEN_RE, log_text4, re.M)}
+        missing = sorted(l_forbidden - s_forbidden)
+        if missing:
+            findings.append(("MAJOR", "L23",
+                             f"alignment-log 登记的禁用表述 {', '.join(missing)} 未汇总进 "
+                             "summary「禁用表述登记」区——Phase B 必须汇总全部 FORBIDDEN "
+                             "行（playbook §3.11/约束第 22 条）"))
+
     # ---- L9 路径隔离：DDL 只落项目根 sql/，禁止内嵌 summary.md ----
     # 错题集 2026-08-12：SQL 全写进 summary.md 时 L6 的输入源（sql/*.sql）为空 →
     # L6 静默失明。机械半边补在这里：内嵌 CREATE TABLE 与「登记了 sql/ 路径但
@@ -579,6 +631,20 @@ def lint(summary_path: Path):
                          "报告登记了 SQL 相对路径（sql/）但 sql/ 目录无 SQL 文件——"
                          "DDL 未按 playbook §2/§3.4 落到项目根 sql/（定位目录："
                          f"{sql_dir}）"))
+    # 第三段·逐文件对账（错题集：登记 4 个 SQL 文件只落地 2 个也报 0——目录级
+    # 存在性检查对「部分缺失」失明）：summary 登记的每个 sql/xxx.sql 逐一查落地，
+    # 缺失合并一条 CRITICAL 回显完整清单；同一路径登记多次只查一次（去重）。
+    # 目录不存在/目录无文件时第二段已报，本段跳过避免双报刷屏。
+    if sql_dir.exists() and list(sql_dir.glob("*.sql")):
+        declared_sql = sorted(set(re.findall(L9_SQL_FILE_RE, text)))
+        missing_sql = [f"sql/{name}" for name in declared_sql
+                       if not (sql_dir / name).exists()]
+        if missing_sql:
+            findings.append(("CRITICAL", "L9",
+                             f"报告登记了 {len(declared_sql)} 个 SQL 文件，其中 "
+                             f"{len(missing_sql)} 个未落地：{', '.join(missing_sql)}"
+                             "——登记的 DDL 必须逐文件落到项目根 sql/（playbook "
+                             f"§2/§3.4；定位目录：{sql_dir}）"))
 
     # ---- L15 DDL 状态枚举 vs 状态机一致性（MAJOR，错题集 2026-08-14）----
     # routing_status 案：DDL 注释写了 PROCESSING/SUCCESS/FAILED，状态机却没画
@@ -642,7 +708,9 @@ def _contract_text() -> list[str]:
         f"- **L9 DDL 内嵌识别**：``{L9_EMBED_DDL_RE}``（建表语句形态才算内嵌——"
         "散文提及 CREATE TABLE 字样不误伤；DDL 只落项目根 sql/，禁止内嵌报告）",
         f"- **L9 SQL 登记检查**：出现 `{L9_SQL_REF_RE}`（相对路径登记）时，sql/ 目录必须"
-        "存在且含 .sql 文件，否则 CRITICAL（目录定位同 L6）",
+        "存在且含 .sql 文件，否则 CRITICAL（目录定位同 L6）；登记的具体文件"
+        f"（``{L9_SQL_FILE_RE}``）逐文件对账，缺失合并一条 CRITICAL 回显完整清单"
+        "（目录不存在/为空时本段跳过，避免与目录级检查双报）",
         "- **L10 空矩阵②兜底**：存在「数据模型」章节但表读写矩阵为空 → CRITICAL"
         "（存在性强制：DDL 草案必须落 sql/，与 L9 一致性检查互补）。"
         f"豁免：命中 `{L10_EXEMPT_RE}`（显式声明无表变更/复用旧表）→ 降 MINOR，蓝军复核",
@@ -681,6 +749,14 @@ def _contract_text() -> list[str]:
         f"- **L22 回流熔断兜底**：draft frontmatter `reflow_round > reflow_budget`"
         f"（缺省 {L22_DEFAULT_REFLOW_BUDGET}）且 alignment-log 无 `ESCALATE` 人类裁决"
         "留痕 → CRITICAL；draft 无 reflow_round 字段（旧现场）不报",
+        f"- **L23 禁用表述反查**：登记行形态 ``{L23_FORBIDDEN_RE}``（summary "
+        "「禁用表述登记」区与 alignment-log 核销处两侧同构）。登记 token 按 "
+        "re.escape 原样字符串全文反查，正文残留（登记行自身豁免，含 `FORBIDDEN:` "
+        "的行不扫）→ CRITICAL；token <4 字符不扫防爆。alignment-log 有登记行但 "
+        "summary 漏收该 token → MAJOR；log 不存在或无登记行不启用。"
+        f"🔴 token 必须精确到可唯一指认的表述（如 `withdrawStatus=INVALID`），"
+        "禁止宽词——宽词会被全文反查误伤；否决语义词表 "
+        f"`{L23_VETO_RE}` 仅触发登记义务（写作提示），不参与机械判定",
         "- **L5 规则定义行**：strip 后以 `| BR` 开头的表格行视为 BR-xx 定义", ""]
 
 
@@ -702,7 +778,7 @@ def run_lint(summary_path: str | Path, workspace_root: str | Path | None = None)
 
     rep = ["# summary_lint 机械检查报告（v2）", "",
            f"> 对象：{summary_path.name} | CRITICAL {len(crit)} / 共 {len(findings)} 条",
-           "> 生成：intent-gate lint_summary（L1-L22 + 三矩阵，逻辑冻结）", ""]
+           "> 生成：intent-gate lint_summary（L1-L23 + 三矩阵，逻辑冻结）", ""]
     rep += _contract_text()
     rep += ["## Findings", ""]
     for lv, rule, detail in findings:

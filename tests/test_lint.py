@@ -349,6 +349,60 @@ class L9PathIsolationTests(LintTestBase):
             f"散文提及被误伤: {findings}",
         )
 
+    def test_declared_sql_files_partially_missing_critical(self):
+        """错题（登记 4 个只落地 2 个也报 0）：目录级存在性检查对部分缺失失明，
+        第三段逐文件对账必须抓——登记 a.sql+b.sql（a.sql 登记两次验去重），
+        只建 a.sql → CRITICAL 且缺失清单含 b.sql。"""
+        sql_dir = self.root / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "a.sql").write_text(
+            "CREATE TABLE `a` (id bigint);\n", encoding="utf-8")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 2. 数据模型\n\n"
+            "DDL 见 sql/a.sql、sql/b.sql；索引设计见 sql/a.sql。\n"
+            "写入：提交后 INSERT a (status)\n"
+        )
+        l9 = [(lv, d) for lv, r, d in findings if r == "L9"]
+        self.assertEqual(len(l9), 1, f"L9 逐文件对账未抓部分缺失: {findings}")
+        self.assertEqual(l9[0][0], "CRITICAL")
+        self.assertIn("sql/b.sql", l9[0][1])
+        self.assertIn("登记了 2 个", l9[0][1])  # 同一路径登记多次只查一次
+
+    def test_declared_sql_files_all_present_silent(self):
+        """阴性：登记的具体文件全部落地 → 第三段不报。"""
+        sql_dir = self.root / "sql"
+        sql_dir.mkdir()
+        for name in ("a.sql", "b.sql"):
+            (sql_dir / name).write_text(
+                f"CREATE TABLE `{name[:-4]}` (id bigint);\n", encoding="utf-8")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 2. 数据模型\n\nDDL 见 sql/a.sql、sql/b.sql。\n"
+            "写入：提交后 INSERT a (status)、INSERT b (status)\n"
+        )
+        self.assertNotIn("L9", _rules(findings))
+
+    def test_dir_level_reference_only_not_fired(self):
+        """防误伤：只提 sql/ 目录（无具体文件名）不触发第三段——
+        目录级存在性归第二段管，辖区不重叠。"""
+        sql_dir = self.root / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "a.sql").write_text(
+            "CREATE TABLE `a` (id bigint);\n", encoding="utf-8")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 2. 数据模型\n\nDDL 统一落 sql/ 目录。\n"
+            "写入：提交后 INSERT a (status)\n"
+        )
+        self.assertNotIn("L9", _rules(findings))
+
+    def test_missing_dir_not_double_reported(self):
+        """目录不存在时第二段已报「目录无文件」，第三段跳过——同案不双报刷屏。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 2. 数据模型\n\nDDL 见 sql/a.sql。\n"
+        )
+        l9 = [(lv, d) for lv, r, d in findings if r == "L9"]
+        self.assertEqual(len(l9), 1, f"目录缺失被双报: {findings}")
+        self.assertIn("无 SQL 文件", l9[0][1])
+
 
 class ContractDisclosureTests(LintTestBase):
     """第 0 刀：报告头部必须披露机械判定契约，且全部从常量插值（防手抄漂移）。"""
@@ -374,6 +428,10 @@ class ContractDisclosureTests(LintTestBase):
         # L9 路径隔离正则（防漂移：契约文本必须跟随常量）
         self.assertIn(lint_mod.L9_EMBED_DDL_RE, report)
         self.assertIn(lint_mod.L9_SQL_REF_RE, report)
+        self.assertIn(lint_mod.L9_SQL_FILE_RE, report)
+        # L23 禁用表述反查正则（登记行形态 + 否决语义词表，同防漂移）
+        self.assertIn(lint_mod.L23_FORBIDDEN_RE, report)
+        self.assertIn(lint_mod.L23_VETO_RE, report)
 
 
 class L10EmptyTableMatrixTests(LintTestBase):
@@ -1008,6 +1066,92 @@ class L22ReflowCircuitBreakerTests(LintTestBase):
         self.write_draft("feature: t\n")
         findings, *_ = self.run_lint("# 报告\n")
         self.assertNotIn("L22", _rules(findings))
+
+
+class L23ForbiddenTokenTests(LintTestBase):
+    """L23（错题集 withdrawStatus=INVALID 案）：人类批复含否决语义时，被否表述
+    必须登记为 FORBIDDEN token——summary 登记区 token 在正文残留 = CRITICAL
+    （文字层改了、结构层还在用旧口径）；alignment-log 有登记行但 summary 漏收
+    = MAJOR。登记行自身豁免；token <4 字符不扫防爆；log 无登记行不启用。"""
+
+    def write_log(self, text: str):
+        d = self.root / "_review"
+        d.mkdir(exist_ok=True)
+        (d / "alignment-log.md").write_text(text, encoding="utf-8")
+
+    def test_forbidden_token_residue_in_body_critical(self):
+        """阳性·真实事故形态：登记 FORBIDDEN: withdrawStatus=INVALID，正文
+        状态机边动作仍写 withdrawStatus=INVALID → L23 CRITICAL。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+            "    [*] --> PROCESSING: 提交 (IF校验)\n"
+            "    PROCESSING --> 已失效: 渠道退回 (withdrawStatus=INVALID)\n"
+            "    PROCESSING --> 已完成: 渠道完成 (DB_UPDATE)\n"
+            "    已完成 --> [*]: 完结\n"
+            "    已失效 --> [*]: 终止\n"
+            "```\n\n## 禁用表述登记\n\n"
+            "- FORBIDDEN: withdrawStatus=INVALID | 依据: Q3 批复\"该状态作废\"\n"
+        )
+        l23 = [(lv, d) for lv, r, d in findings if r == "L23"]
+        self.assertEqual(len(l23), 1, f"L23 未抓正文残留: {findings}")
+        self.assertEqual(l23[0][0], "CRITICAL")
+        self.assertIn("withdrawStatus=INVALID", l23[0][1])
+
+    def test_log_forbidden_missing_in_summary_major(self):
+        """阳性：alignment-log 登记了 FORBIDDEN 行，summary 漏收该 token
+        → L23 MAJOR（log 登记了但 summary 漏汇总）。"""
+        self.write_log("# 流水\n\n## Q2 前缀复用\n"
+                       "- FORBIDDEN: SIGN_CHANGE_LOCK_PREFIX | 依据: Q2 批复\"禁止复用旧前缀\"\n")
+        findings, *_ = self.run_lint("# 报告\n\n无禁用表述登记。\n")
+        l23 = [(lv, d) for lv, r, d in findings if r == "L23"]
+        self.assertEqual(len(l23), 1, f"L23 未抓漏收: {findings}")
+        self.assertEqual(l23[0][0], "MAJOR")
+        self.assertIn("SIGN_CHANGE_LOCK_PREFIX", l23[0][1])
+
+    def test_no_forbidden_anywhere_silent(self):
+        """防误伤：summary 无 FORBIDDEN 行、log 无 FORBIDDEN 行 → 零 findings
+        （旧现场零误报）。"""
+        self.write_log("# 流水\n\n## Q1 普通题\n- 落点：§1\n")
+        findings, *_ = self.run_lint("# 报告\n\n纯文本，无登记区。\n")
+        self.assertNotIn("L23", _rules(findings))
+
+    def test_registered_token_without_residue_silent(self):
+        """阴性：登记了 token 且正文无残留 → 零 findings。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 1. 状态机\n\n```mermaid\nstateDiagram-v2\n"
+            "    DRAFT --> SUCCESS: 直达\n```\n\n## 禁用表述登记\n\n"
+            "- FORBIDDEN: withdrawStatus=INVALID | 依据: Q3 批复\"该状态作废\"\n"
+        )
+        self.assertNotIn("L23", _rules(findings))
+
+    def test_registration_line_itself_not_counted(self):
+        """登记行自身豁免：依据摘录在登记行内复现 token（整行含 FORBIDDEN:）
+        不算正文残留——豁免按行过滤，不是按出现位置。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 禁用表述登记\n\n"
+            "- FORBIDDEN: withdrawStatus=INVALID | 依据: Q3 批复"
+            "\"withdrawStatus=INVALID 作废，改用 withdrawStatus=REJECTED\"\n"
+        )
+        self.assertNotIn("L23", _rules(findings))
+
+    def test_log_and_summary_both_registered_silent(self):
+        """阴性：log 与 summary 双侧登记同一 token → L23b 对账通过，不报。"""
+        self.write_log("# 流水\n\n## Q3 状态作废\n"
+                       "- FORBIDDEN: withdrawStatus=INVALID | 依据: Q3 批复\"作废\"\n")
+        findings, *_ = self.run_lint(
+            "# 报告\n\n## 禁用表述登记\n\n"
+            "- FORBIDDEN: withdrawStatus=INVALID | 依据: Q3 批复\"作废\"\n"
+        )
+        self.assertNotIn("L23", _rules(findings))
+
+    def test_short_token_not_scanned(self):
+        """防爆：token <4 字符不参与全文反查（宽词/短词误伤由登记纪律
+        「禁止宽词」在源头拦截，机械侧再做短路）。"""
+        findings, *_ = self.run_lint(
+            "# 报告\n\n正文提到 ABC 流程。\n\n## 禁用表述登记\n\n"
+            "- FORBIDDEN: ABC | 依据: Q1 批复\"作废\"\n"
+        )
+        self.assertNotIn("L23", _rules(findings))
 
 
 if __name__ == "__main__":

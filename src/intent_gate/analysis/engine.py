@@ -11,7 +11,7 @@
   🟡 局部歧义（计算口径不明 / 边界未覆盖 / 术语新造词）
   🟢 流程闭环
 
-歧义点初筛规则来自 skill 的九类歧义点表，只实现正则可判的子集；
+歧义点初筛规则来自 skill 的十一类歧义点表，只实现正则可判的子集；
 判不了的（如字段语义歧义）留给宿主 agent 语义分析。
 """
 
@@ -51,7 +51,7 @@ _FAILURE_WORDS = ["失败", "异常", "超时", "回滚", "补偿", "重试", "�
 
 # ------------------------------------------------------------ 歧义点规则
 # 每条规则：(需命中正则, 需缺失正则或None, 级别, 类别, gap描述, 候选选项)
-# 对应 skill 九类歧义点里正则可判的部分。
+# 对应 skill 十一类歧义点里正则可判的部分。
 _GAP_RULES: list[tuple[str, str | None, str, str, str, list[str]]] = [
     # 资金安全：写操作只提前端防重，无服务端机制 → 🔴（skill 原文视同核心逻辑断层）
     (
@@ -185,7 +185,7 @@ def _judge_pattern(text: str) -> dict:
 
 
 def _scan_gaps(text: str) -> list[dict]:
-    """歧义点机械初筛（skill 九类歧义点的正则可判子集）。"""
+    """歧义点机械初筛（skill 十一类歧义点的正则可判子集）。"""
     gaps = []
     for need, absent, level, category, gap, options in _GAP_RULES:
         if not re.search(need, text):
@@ -408,7 +408,7 @@ def _fresh(
 
 _A0_PROBE_HINT = (
     "A0 并行探测（complex 应执行）：并行派两个子代理——explore 阅读层扫雷 "
-    "（九类清单）+ draw 硬画带 TBDn 草稿图（失败边四类必查），返回后主对话层"
+    "（十一类清单）+ draw 硬画带 TBDn 草稿图（失败边四类必查），返回后主对话层"
     "合并去重再发题"
 )
 

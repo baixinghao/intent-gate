@@ -23,6 +23,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from ..logging import get_logger
+from ..phase_rules import feature_from_summary_path, with_phase_rules
 from ..workspace import resolve_root
 from .engine import analyze_request, record_analysis
 from .lint import run_lint
@@ -49,7 +50,7 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
         """需求分析 playbook 全文（skill + agent 双来源约束，切红蓝版）。
 
         🔴 开始任何需求分析任务前必须先读本 playbook——它是你的法律文本：
-        Step 0 置信度评估 / Step 0.5 意图对齐（九类歧义点 + 精准提问格式）/
+        Step 0 置信度评估 / Step 0.5 意图对齐（十一类歧义点 + 精准提问格式）/
         Step 1 型态判定 / Step 3 章节与 mermaid 规范 / Step 4 交付门禁。
         判断在你的脑子里做，纪律由 MCP 工具强制。"""
         return _PLAYBOOK_PATH.read_text(encoding="utf-8")
@@ -67,14 +68,14 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
         features: list[str] = []
         if requests_dir.is_dir():
             features = sorted(p.name for p in requests_dir.iterdir() if p.is_dir())
-        return {
+        return with_phase_rules({
             "ok": True,
             "workspace_root": str(root),
             "source": "project_path" if project_path else "启动时 workspace_root（未显式指定）",
             "harness_dir": str(root / ".harness"),
             "harness_exists": requests_dir.is_dir(),
             "features": features,
-        }
+        }, "describe_workspace", root)
 
     @mcp.tool()
     def analyze_requirement(
@@ -97,7 +98,9 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
 
         project_path: 本次调用生效的项目根（.harness 所在）。省略则用进程启动时的
         workspace_root；宿主服务多个工作区时必须显式传，否则现场会查/建到启动目录去。"""
-        return analyze_request(_root(project_path), feature, prd_path)
+        return with_phase_rules(
+            analyze_request(_root(project_path), feature, prd_path),
+            "analyze_requirement", _root(project_path), feature)
 
     @mcp.tool()
     def record_judgment(
@@ -119,23 +122,27 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
         落盘后逐题 dispatch_question 分发（🔴 未消 status=blocked）。
         project_path: 本次调用生效的项目根（.harness 所在）；省略则用进程启动时的
         workspace_root——宿主服务多个工作区时必须显式传，否则账本写错项目。"""
-        return record_analysis(
-            _root(project_path), feature, logic_pattern, complexity, confidence,
-            selected_tools, gaps, prd_path, notes,
-        )
+        return with_phase_rules(
+            record_analysis(
+                _root(project_path), feature, logic_pattern, complexity, confidence,
+                selected_tools, gaps, prd_path, notes,
+            ), "record_judgment", _root(project_path), feature)
 
     @mcp.tool()
     def lint_summary(summary_path: str, project_path: str | None = None) -> dict:
-        """summary.md 机械自检（L1-L22 + 三矩阵，逻辑冻结）。
+        """summary.md 机械自检（L1-L23 + 三矩阵，逻辑冻结）。
 
         L1 成功终态 / L2 死状态 / L3 多出边 / L4 映射表锚点 / L5 BR 引用 /
         L6 表读写矩阵 / L7 映射行覆盖 / L8 降级回执 / L9 路径隔离 /
         L10 空矩阵② / L11 complex 打标 / L12 锚点可机检 / L13 占位符残留 /
-        L21 图演化校验 / L22 回流熔断兜底 + 三张矩阵骨架。
+        L21 图演化校验 / L22 回流熔断兜底 / L23 禁用表述反查 + 三张矩阵骨架。
         🔴 CRITICAL 未归零不得交付（playbook Step 4 门禁）。
         project_path: 本次调用生效的项目根。summary_path 给相对路径时按它解析
         （不再按进程 cwd）；省略则用进程启动时的 workspace_root。"""
-        return run_lint(summary_path, workspace_root=_root(project_path))
+        root = _root(project_path)
+        return with_phase_rules(
+            run_lint(summary_path, workspace_root=root), "lint_summary", root,
+            feature_from_summary_path(root, summary_path))
 
     @mcp.tool()
     def draft_mapping(summary_path: str, project_path: str | None = None) -> dict:
@@ -146,6 +153,9 @@ def register_analysis_tools(mcp: FastMCP, workspace_root: str | Path) -> None:
         ⚠️ 未定位条目必须当场回问人类，禁止静默放过。
         project_path: 本次调用生效的项目根。summary_path 给相对路径时按它解析
         （不再按进程 cwd）；省略则用进程启动时的 workspace_root。"""
-        return run_mapper(summary_path, workspace_root=_root(project_path))
+        root = _root(project_path)
+        return with_phase_rules(
+            run_mapper(summary_path, workspace_root=root), "draft_mapping", root,
+            feature_from_summary_path(root, summary_path))
 
     log.info("analysis tools registered (5 tools + 1 prompt)")

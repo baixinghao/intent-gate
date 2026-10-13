@@ -16,7 +16,7 @@ mechanical lint.
 starting Step 0. This skill is the map; the playbook is the territory.**
 
 **Dual-layer detection — the diagram is the instrument, not a deliverable.**
-Layer 1 (reading): sweep the PRD text for explicit ambiguities (the nine-category
+Layer 1 (reading): sweep the PRD text for explicit ambiguities (the eleven-category
 checklist). Layer 2 (drawing): do NOT wait for answers before drawing — hard-draw
 draft diagrams in the FIRST turn; every node/edge you cannot draw becomes a `TBDn`
 placeholder (`state "???待确认" as TBDn` / `--> TBDn`; never bare `--> ???`, lint's

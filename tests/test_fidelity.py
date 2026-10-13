@@ -32,15 +32,16 @@ class PlaybookFidelityTests(unittest.TestCase):
 
     def test_skill_core_sections_present(self):
         for marker in (
-            "意图置信度评估", "Step 0.5", "歧义点发现规则（九类）", "精准提问格式",
+            "意图置信度评估", "Step 0.5", "歧义点发现规则（十一类）", "精准提问格式",
             "降级确认回执", "型态判定标准", "降级修正", "direction LR", "autonumber",
             "条件-动作矩阵表", "意图注入映射表", "技术打标强校验",
         ):
             self.assertIn(marker, self.text, f"playbook 缺失: {marker}")
 
-    def test_nine_gap_categories_present(self):
+    def test_eleven_gap_categories_present(self):
         for marker in ("字段语义歧义", "第三方接口契约不明", "术语对齐",
-                       "缺失的异常/回滚路径", "缺失的条件组合", "资金安全"):
+                       "缺失的异常/回滚路径", "缺失的条件组合", "资金安全",
+                       "口径一致性", "前置依赖"):
             self.assertIn(marker, self.text)
 
     def test_agent_constraints_merged(self):
