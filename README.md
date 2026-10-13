@@ -135,6 +135,27 @@ button instead of designing a server-side distributed lock, hardcode a success p
 instead of routing by `queryCurrentStep`, and never model the `EXPIRED` state at all.
 The guessing space is structurally compressed, not politely discouraged.
 
+## Measured against a peer plugin
+
+Same PRD (a deliberately vague withdrawal-confirmation page), same project, same
+model, same human answering: intent-gate vs a peer intent-alignment plugin, plus
+a two-round independent red-blue review of the intent-gate output.
+
+- **3.5× the questions** (35 vs 10) — 31% of them surfaced only through self-review
+  and the adversarial rounds, including 6 failure edges that no amount of PRD
+  reading reveals
+- **The peer landed a real hit too**: a terminology-vs-ruling conflict that
+  intent-gate missed across 24 questions — the two detection surfaces complement
+  each other; neither replaces the other
+- **The sobering part**: 24 questions resolved, mechanical lint green, self-declared
+  "no open issues" — and the red-blue review still found **6 CRITICAL** defects
+  (one would have let any user void someone else's order). Self-attestation is
+  not evidence; independent review is not optional
+- Cost: ≈11% extra input tokens for the MCP machinery
+
+Setup, isolation protocol, token metering and round-by-round findings (Chinese):
+[summary](docs/comparison/summary.md) · [full report](docs/comparison/full-report.md)
+
 ## Where to put your PRD
 
 intent-gate accepts **UTF-8 text files** or **.docx** (the dominant format for business requirements). Three ways to hand one over:
@@ -240,7 +261,7 @@ Gaps come in four kinds, each with its own detector — "can't draw it" is only 
 | Layer | Mechanism | What it catches |
 |---|---|---|
 | ① Forced formalization | Draw the diagram; mark wherever you can't | **Perceived gaps** — the model knows it doesn't know |
-| ② Taxonomy sweep | A nine-category ambiguity checklist (exception paths / rollback / condition combinations / field semantics / idempotency & privilege / terminology…) | **Semi-silent gaps** — the model won't stall on its own, but sweeping element-by-element with the checklist exposes them |
+| ② Taxonomy sweep | An eleven-category ambiguity checklist (exception paths / rollback / condition combinations / field semantics / idempotency & privilege / terminology…) | **Semi-silent gaps** — the model won't stall on its own, but sweeping element-by-element with the checklist exposes them |
 | ③ Mechanical lint | L1 no successful terminal state / L2 dead states / L6 table has no writes… | **Fully silent gaps** — places the model filled in without any awareness; enforced by code, zero reliance on self-discipline |
 | ④ Blue-team independent review | Independent session + information diet (optional skill) | **Systematic blind spots of the author's attention** — layers ①–③ are the same pair of eyes; this one swaps in a fresh pair |
 
