@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from intent_gate.hook import emit_session_start  # noqa: E402
 from intent_gate.installer import (  # noqa: E402
-    _DSH_MARK, _PLAYBOOK_SKILL_NAME, _SKILL_NAMES, install, target_path, uninstall,
+    _DSH_MARK, _KIMI_MARK_BEGIN, _PLAYBOOK_SKILL_NAME, _SKILL_NAMES,
+    install, target_path, uninstall,
 )
 
 
@@ -260,6 +262,149 @@ class DshInstallTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             from intent_gate.installer import _dsh_home
             self.assertEqual(_dsh_home(self.home), self.home / ".dsh")
+
+
+class KimiCodeInstallTests(unittest.TestCase):
+    """install/uninstall --target kimi-code：mcp.json 合并 + skills 复制 +
+    config.toml 纪律注入 hook；幂等；只拆自己接的线。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        self.kimi_home = self.home / "kimi"
+        self.env_patch = mock.patch.dict(
+            os.environ, {"KIMI_CODE_HOME": str(self.kimi_home)})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _run_hook(self, stdin_text: str) -> subprocess.CompletedProcess:
+        script = self.kimi_home / "hooks" / "intent-gate-inject.py"
+        return subprocess.run(
+            [sys.executable, str(script)], input=stdin_text, check=False,
+            capture_output=True, encoding="utf-8", env=dict(os.environ))
+
+    def test_fresh_install_writes_all_three_pieces(self):
+        r = install("kimi-code")
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["mcp_changed"])
+        self.assertTrue(r["hook_changed"])
+        cfg = json.loads((self.kimi_home / "mcp.json").read_text("utf-8"))
+        self.assertEqual(cfg["mcpServers"]["intent-gate"],
+                         {"command": "intent-gate"})
+        for name in _SKILL_NAMES:
+            self.assertTrue((self.kimi_home / "skills" / name / "SKILL.md").exists(),
+                            f"missing skill {name}")
+        toml = (self.kimi_home / "config.toml").read_text("utf-8")
+        self.assertIn(_KIMI_MARK_BEGIN, toml)
+        self.assertIn('event = "UserPromptSubmit"', toml)
+        self.assertIn("intent-gate-inject.py", toml)
+        self.assertIn("timeout = 10", toml)
+        script = self.kimi_home / "hooks" / "intent-gate-inject.py"
+        self.assertTrue(script.exists())
+        self.assertIn("fail-open", script.read_text("utf-8"))
+
+    def test_idempotent_second_install(self):
+        install("kimi-code")
+        r = install("kimi-code")
+        self.assertFalse(r["mcp_changed"])
+        self.assertFalse(r["hook_changed"])
+        self.assertFalse(r["hook_script_changed"])
+        self.assertEqual(r["skills"]["installed"], [])
+        toml = (self.kimi_home / "config.toml").read_text("utf-8")
+        self.assertEqual(toml.count(_KIMI_MARK_BEGIN), 1)
+        self.assertEqual(toml.count("[[hooks]]"), 1)
+
+    def test_preserves_existing_config_and_mcp_entries(self):
+        self.kimi_home.mkdir(parents=True)
+        (self.kimi_home / "config.toml").write_text('model = "k2"\n', "utf-8")
+        (self.kimi_home / "mcp.json").write_text(json.dumps(
+            {"mcpServers": {"other": {"command": "other-cmd"}}}), "utf-8")
+        install("kimi-code")
+        toml = (self.kimi_home / "config.toml").read_text("utf-8")
+        self.assertIn('model = "k2"', toml)
+        cfg = json.loads((self.kimi_home / "mcp.json").read_text("utf-8"))
+        self.assertEqual(cfg["mcpServers"]["other"], {"command": "other-cmd"})
+        self.assertIn("intent-gate", cfg["mcpServers"])
+
+    def test_recognizes_manually_added_mcp_entry(self):
+        # 用户手动加了同名 mcpServers 条目：视为已装，不覆盖用户配置
+        self.kimi_home.mkdir(parents=True)
+        (self.kimi_home / "mcp.json").write_text(json.dumps(
+            {"mcpServers": {"intent-gate": {"command": "custom-ig"}}}), "utf-8")
+        r = install("kimi-code")
+        self.assertFalse(r["mcp_changed"])
+        cfg = json.loads((self.kimi_home / "mcp.json").read_text("utf-8"))
+        self.assertEqual(cfg["mcpServers"]["intent-gate"],
+                         {"command": "custom-ig"})
+
+    def test_uninstall_removes_all_keeps_user_content(self):
+        self.kimi_home.mkdir(parents=True)
+        (self.kimi_home / "config.toml").write_text('model = "k2"\n', "utf-8")
+        install("kimi-code")
+        marker = self.kimi_home / "hooks" / ".ig-injected-s1"
+        marker.write_text("injected\n", "utf-8")
+        r = uninstall("kimi-code")
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["mcp_changed"])
+        self.assertTrue(r["hook_changed"])
+        toml = (self.kimi_home / "config.toml").read_text("utf-8")
+        self.assertNotIn("intent-gate", toml)
+        self.assertIn('model = "k2"', toml)
+        cfg = json.loads((self.kimi_home / "mcp.json").read_text("utf-8"))
+        self.assertNotIn("intent-gate", cfg["mcpServers"])
+        self.assertEqual(r["skills"], list(_SKILL_NAMES))
+        for name in _SKILL_NAMES:
+            self.assertFalse((self.kimi_home / "skills" / name).exists())
+        self.assertFalse((self.kimi_home / "hooks" / "intent-gate-inject.py").exists())
+        self.assertFalse(marker.exists())
+
+    def test_uninstall_config_created_by_install_is_removed_when_emptied(self):
+        install("kimi-code")
+        uninstall("kimi-code")
+        self.assertFalse((self.kimi_home / "config.toml").exists())
+
+    def test_uninstall_without_marks_leaves_manual_config_untouched(self):
+        self.kimi_home.mkdir(parents=True)
+        (self.kimi_home / "config.toml").write_text(
+            '[[hooks]]\nevent = "UserPromptSubmit"\ncommand = "mine"\n', "utf-8")
+        r = uninstall("kimi-code")
+        self.assertFalse(r["hook_changed"])
+        self.assertIn('command = "mine"',
+                      (self.kimi_home / "config.toml").read_text("utf-8"))
+
+    def test_dry_run_writes_nothing(self):
+        r = install("kimi-code", dry_run=True)
+        self.assertTrue(r["mcp_changed"])
+        self.assertTrue(r["hook_changed"])
+        self.assertTrue(r["hook_script_changed"])
+        self.assertFalse(self.kimi_home.exists())
+
+    def test_hook_script_injects_once_per_session(self):
+        install("kimi-code")
+        first = self._run_hook('{"session_id": "s1"}')
+        self.assertEqual(first.returncode, 0)
+        self.assertIn("name: using-intent-gate", first.stdout)
+        second = self._run_hook('{"session_id": "s1"}')
+        self.assertEqual(second.returncode, 0)
+        self.assertEqual(second.stdout, "")
+        third = self._run_hook('{"session_id": "s2"}')  # 新会话重新注入
+        self.assertIn("name: using-intent-gate", third.stdout)
+
+    def test_hook_script_fail_open_on_garbage_stdin(self):
+        install("kimi-code")
+        r = self._run_hook("not json at all")
+        self.assertEqual(r.returncode, 0)  # 取不到 session_id 也照常注入（unknown 去重）
+        self.assertIn("name: using-intent-gate", r.stdout)
+
+    def test_home_param_used_when_env_missing(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            r = install("kimi-code", home=self.home)
+            self.assertTrue(r["ok"])
+            self.assertTrue((self.home / ".kimi-code" / "mcp.json").exists())
+
+    def test_target_path_kimi_code_uses_env(self):
+        self.assertEqual(target_path("kimi-code"), self.kimi_home)
 
 
 class HookEmitTests(Base):

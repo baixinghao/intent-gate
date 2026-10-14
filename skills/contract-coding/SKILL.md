@@ -1,6 +1,6 @@
 ---
 name: contract-coding
-description: Use when implementing or modifying code for a requirement (实现需求/编码/写代码/开工) that has an intent-gate contract (.harness/requests/*/summary.md exists) - an addendum layer ON TOP of your existing coding skills/workflow (superpowers, project CLAUDE.md, etc.): it never replaces them, it only adds "code is generated FROM the mermaid contract, never against it". 中文触发：实现需求/开始编码/按图施工/写代码（当 .harness/requests/ 下存在契约时）。
+description: Use when implementing or modifying code for a requirement (实现需求/编码/写代码/开工) that has an intent-gate contract (.harness/requests/*/summary.md exists) - an addendum layer ON TOP of your existing coding skills/workflow (superpowers, project CLAUDE.md/AGENTS.md, etc.): it never replaces them, it only adds "code is generated FROM the mermaid contract, never against it". 中文触发：实现需求/开始编码/按图施工/写代码（当 .harness/requests/ 下存在契约时）。
 ---
 
 # Contract-Driven Coding（附加层，非编码 skill）

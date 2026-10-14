@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     hook_p.add_argument("--format", choices=["cursor", "claude", "standard"],
                         default="standard")
 
-    for name, helptext in (("install", "把 intent-gate 接进 agent 配置（cursor/codex hooks，或 dsh 的 cordis.patch.yml + skills）"),
+    for name, helptext in (("install", "把 intent-gate 接进 agent 配置（cursor/codex hooks、dsh 的 cordis.patch.yml + skills，或 kimi-code 的 mcp.json + skills + 纪律注入 hook）"),
                            ("uninstall", "拆除 install --target 接的线（只拆自己的）")):
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("--target", required=True, choices=SUPPORTED_TARGETS)

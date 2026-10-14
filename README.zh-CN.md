@@ -255,7 +255,7 @@ lint CRITICAL 归零、人类对断层逐题拍板"。**置信度是图的属性
 | Python | ≥ 3.11 | [python.org](https://www.python.org/downloads/)；pipx/uv 会管理独立环境 |
 | 包管理器 | `pipx` 或 `uv` 任一 | [pipx 安装](https://pipx.pypa.io/stable/installation/) / [uv 安装](https://docs.astral.sh/uv/getting-started/installation/) |
 | 操作系统 | Windows / macOS / Linux | Windows 的插件 SessionStart 注入需 [Git Bash](https://gitforwindows.org/)（缺省时静默跳过，其余功能不受影响） |
-| MCP 客户端 | 支持 MCP 的任一客户端 | Claude Code / Cursor / VS Code 等；skills/hooks 插件形态目前为 Claude Code 定制 |
+| MCP 客户端 | 支持 MCP 的任一客户端 | Claude Code / Cursor / VS Code / Kimi Code 等；skills/hooks 插件形态目前为 Claude Code 定制，DSH / Kimi Code 经 `install --target` 获得全量支持 |
 
 **依赖包**（安装时自动带上，无需手动安装）：
 
@@ -305,12 +305,14 @@ claude plugin install intent-gate@baixinghao-plugins
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
 | DeepSeek Harness（`install --target dsh`） | ✅ 已验证——MCP 工具经 `dsh-mcp-client` 桥接（14 个工具握手实测）+ skills 热加载进 `$DSH_HOME/skills`；安装器合并/幂等逻辑有单元测试 |
+| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json 合并 + skills + 每会话纪律注入 hook；合并/幂等逻辑有单元测试，hook 契约依据官方文档 |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
 执法的那一半——工具、问题账本、lint 门禁、`doc_analysis_playbook` prompt——
 是标准 MCP，任何支持 MCP prompt 的客户端都能全量使用；
-只有 skills/hooks 那一半是 Claude Code 专属。
+只有 skills/hooks 那一半是 Claude Code 专属；DSH 与 Kimi Code 经
+`install --target dsh` / `--target kimi-code` 获得全量支持（工具 + skills）。
 
 跑完第 1 步（`pipx`/`uv tool install intent-gate-mcp`）后，任选一种注册方式：
 
@@ -401,6 +403,22 @@ intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + s
   `$DSH_HOME/profiles/*/cordis.patch.yml` 自动发现。patch 模板
   （注释 + `[]`）整体替换，用户已有条目原样保留。
 
+**Kimi Code**：三件套、零手工配置——安装器把 `intent-gate` server 合并进
+`$KIMI_CODE_HOME/mcp.json`（只合并不覆盖，已有 `mcpServers` 条目原样保留）、
+把 4 个 skills 复制到 `$KIMI_CODE_HOME/skills/`、并向
+`$KIMI_CODE_HOME/config.toml` 追加标记块包裹的 `[[hooks]]` 条目，
+在 `UserPromptSubmit` 事件按会话注入入口纪律（hook 脚本 fail-open，
+绝不阻塞会话；`uninstall --target kimi-code` 只拆自己接的线）：
+
+```bash
+pipx install intent-gate-mcp            # 1) 装 server（或 uv tool install intent-gate-mcp）
+intent-gate install --target kimi-code  # 2) 接线 Kimi Code——mcp.json + skills + 每会话纪律注入 hook
+# 3) 重启 Kimi Code 会话：工具以 mcp__intent-gate__<tool> 出现，
+#    skills 在 $KIMI_CODE_HOME/skills，每会话首个 prompt 自动注入入口纪律
+```
+
+尊重 `KIMI_CODE_HOME` 环境变量，默认 `~/.kimi-code`。
+
 不管哪个客户端，开局先让 agent 完整读一遍 MCP prompt
 `doc_analysis_playbook`——它是法律，随 server 分发，不依赖任何插件。
 （客户端不支持 MCP prompt 的，让 agent 直接读
@@ -414,7 +432,7 @@ intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + s
 ## 备注
 
 - **文档解析边界**：只支持 .docx；`.doc` 老格式 / `.pdf` / `.xlsx` 等二进制请先转文本（Word「另存为 → .docx 或 纯文本(.txt)」，PDF 导出/另存为文本）
-- MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制，DSH 经 `install --target dsh` 获得全量支持（工具 + skills）**——其他客户端只有 server 一半
+- MCP server 通用（stdio/SSE，任何 MCP 客户端可挂）；**skills/hooks 插件形态目前为 Claude Code 定制，DSH 与 Kimi Code 经 `install --target dsh` / `--target kimi-code` 获得全量支持（工具 + skills）**——其他客户端只有 server 一半
 - 账本写在 `{workspace_root}/.harness/requests/` 下，会被 git 跟踪——介意入库请加 `.gitignore`。这个根由每次调用的 `project_path` 决定，省略则回落 server 启动根（见上文 DSH 工作区解析说明）
 
 ## 开发（克隆仓库）

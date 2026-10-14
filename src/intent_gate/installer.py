@@ -13,6 +13,10 @@
                                   skills 经 skill 发现机制热加载；mcp-client 不桥接
                                   MCP prompt，故 playbook 以 doc-analysis-playbook
                                   skill 形式一并安装）
+  kimi-code  $KIMI_CODE_HOME/    mcp.json 合并（mcpServers 条目）+ 4 skills 复制到
+                                  skills/ + config.toml [[hooks]] UserPromptSubmit
+                                  纪律注入（每会话首次 prompt 注入 using-intent-gate
+                                  skill 全文，hook 脚本 fail-open 绝不阻塞会话）
 铁律：合并而非覆盖——用户已有的第三方条目一条不动；
 幂等——重复 install 不产生重复条目；uninstall 只拆自己接的线。
 """
@@ -24,7 +28,7 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
-SUPPORTED_TARGETS = ("cursor", "codex", "dsh")
+SUPPORTED_TARGETS = ("cursor", "codex", "dsh", "kimi-code")
 
 _HOOK_CMD = {
     "cursor": "intent-gate hook session-start --format cursor",
@@ -300,10 +304,237 @@ def _unmerge_codex(existing: str) -> tuple[str, bool]:
     return text.strip("\n") + "\n", True
 
 
+# ---------------------------------------------------------------- kimi-code
+_KIMI_MARK_BEGIN = ("# intent-gate: kimi-code integration "
+                    "(managed by 'intent-gate install --target kimi-code')")
+_KIMI_MARK_END = "# intent-gate: end"
+
+# hook 脚本：分发给用户的独立产物，运行期自行解析 KIMI_CODE_HOME（与安装期
+# 同一惯例），故脚本体与安装路径无关。fail-open：任何异常静默 exit 0，
+# 绝不阻塞用户会话。每会话只注一次（按 session_id 落标记文件去重）。
+_KIMI_HOOK_SCRIPT = r'''# intent-gate: per-session discipline injection for Kimi Code
+# (managed by 'intent-gate install --target kimi-code').
+# fail-open: 任何异常静默 exit 0，绝不阻塞用户会话。
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def _kimi_home():
+    env = os.environ.get("KIMI_CODE_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".kimi-code"
+
+
+def main():
+    try:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        raw = sys.stdin.read()
+        session_id = "unknown"
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+            session_id = str(payload.get("session_id") or "unknown")
+        except Exception:
+            pass
+        # session_id 进文件名，先消毒（防路径分隔符）
+        session_id = re.sub(r"[^A-Za-z0-9_-]", "_", session_id) or "unknown"
+        home = _kimi_home()
+        marker = home / "hooks" / (".ig-injected-" + session_id)
+        if marker.exists():
+            return  # 本会话已注入过，静默放行
+        skill = home / "skills" / "using-intent-gate" / "SKILL.md"
+        sys.stdout.write(skill.read_text(encoding="utf-8"))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("injected\n", encoding="utf-8")
+    except Exception:
+        pass  # fail-open
+
+
+main()
+sys.exit(0)
+'''
+
+
+def _kimi_home(home: Path | None) -> Path:
+    env = os.environ.get("KIMI_CODE_HOME")
+    if env:
+        return Path(env)
+    return (home or Path.home()) / ".kimi-code"
+
+
+def _merge_mcp_servers(existing: dict) -> tuple[dict, bool]:
+    """合并 mcpServers 条目；幂等按条目名识别（用户手动加的同名条目视为已装，
+    不覆盖用户配置）。"""
+    cfg = dict(existing)
+    servers = cfg.setdefault("mcpServers", {})
+    if "intent-gate" in servers:
+        return cfg, False
+    servers["intent-gate"] = {"command": "intent-gate"}
+    return cfg, True
+
+
+def _unmerge_mcp_servers(existing: dict) -> tuple[dict, bool]:
+    servers = existing.get("mcpServers", {})
+    if "intent-gate" not in servers:
+        return existing, False
+    cfg = dict(existing)
+    cfg["mcpServers"] = {k: v for k, v in servers.items() if k != "intent-gate"}
+    return cfg, True
+
+
+def _kimi_toml_block(kimi_home: Path) -> str:
+    # TOML 双引号字符串里反斜杠是转义符——路径一律 as_posix()，Windows 下
+    # python 与 shell 均接受正斜杠。
+    script = (kimi_home / "hooks" / "intent-gate-inject.py").as_posix()
+    return (
+        f"{_KIMI_MARK_BEGIN}\n"
+        "[[hooks]]\n"
+        'event = "UserPromptSubmit"\n'
+        f'command = "python \\"{script}\\""\n'
+        "timeout = 10\n"
+        f"{_KIMI_MARK_END}\n"
+    )
+
+
+def _merge_kimi_toml(existing: str, block: str) -> tuple[str, bool]:
+    """追加标记块；幂等按 begin 标记识别。存量内容一行不动。"""
+    if _KIMI_MARK_BEGIN in existing:
+        return existing, False
+    stripped = existing.replace("\ufeff", "").strip()  # BOM 兜底
+    if not stripped:
+        return block, True
+    return existing.rstrip("\n") + "\n\n" + block, True
+
+
+def _unmerge_kimi_toml(existing: str) -> tuple[str, bool]:
+    """摘除 begin/end 标记对圈定的块（比 dsh 的「从标记摘到文件尾」精确：
+    用户在块之后追加的内容不受影响）。无标记视为手动配置，不碰。"""
+    if _KIMI_MARK_BEGIN not in existing:
+        return existing, False
+    start = existing.find(_KIMI_MARK_BEGIN)
+    end = existing.find(_KIMI_MARK_END, start)
+    end = end + len(_KIMI_MARK_END) if end != -1 else len(existing)
+    text = existing[:start] + existing[end:]
+    text = text.replace("\ufeff", "")
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    text = text.strip("\n")
+    return (text + "\n" if text else ""), True
+
+
+def _install_kimi_skills(kimi_home: Path, dry_run: bool) -> dict:
+    skills_dir = kimi_home / "skills"
+    installed, skipped = [], []
+    for name in _SKILL_NAMES:
+        dst = skills_dir / name / "SKILL.md"
+        if dst.exists():
+            skipped.append(name)
+            continue
+        if dry_run:
+            installed.append(name)
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(_skill_source_text(name), encoding="utf-8")
+        installed.append(name)
+    return {"installed": installed, "skipped": skipped}
+
+
+def _install_kimi_code(kimi_home: Path, dry_run: bool) -> dict:
+    mcp_path = kimi_home / "mcp.json"
+    existing = json.loads(mcp_path.read_text("utf-8")) if mcp_path.exists() else {}
+    mcp_merged, mcp_changed = _merge_mcp_servers(existing)
+    if mcp_changed and not dry_run:
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text(json.dumps(mcp_merged, ensure_ascii=False, indent=2) + "\n",
+                            "utf-8")
+    skills = _install_kimi_skills(kimi_home, dry_run)
+    cfg_path = kimi_home / "config.toml"
+    block = _kimi_toml_block(kimi_home)
+    existing_cfg = cfg_path.read_text("utf-8") if cfg_path.exists() else ""
+    cfg_merged, cfg_changed = _merge_kimi_toml(existing_cfg, block)
+    script_path = kimi_home / "hooks" / "intent-gate-inject.py"
+    # hook 脚本是纯托管产物：内容不同即重写，保证升级后脚本最新
+    script_changed = (not script_path.exists()
+                      or script_path.read_text("utf-8") != _KIMI_HOOK_SCRIPT)
+    if not dry_run:
+        if cfg_changed:
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(cfg_merged, "utf-8")
+        if script_changed:
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            script_path.write_text(_KIMI_HOOK_SCRIPT, "utf-8")
+    return {
+        "ok": True, "target": "kimi-code",
+        "mcp_json": str(mcp_path), "mcp_changed": mcp_changed,
+        "skills": skills,
+        "config_toml": str(cfg_path), "hook_changed": cfg_changed,
+        "hook_script": str(script_path), "hook_script_changed": script_changed,
+        "dry_run": dry_run,
+        "note": "重启 Kimi Code 会话后生效；每会话首次 prompt 自动注入入口纪律",
+    }
+
+
+def _uninstall_kimi_code(kimi_home: Path, dry_run: bool) -> dict:
+    mcp_path = kimi_home / "mcp.json"
+    mcp_changed = False
+    if mcp_path.exists():
+        mcp_merged, mcp_changed = _unmerge_mcp_servers(
+            json.loads(mcp_path.read_text("utf-8")))
+        if mcp_changed and not dry_run:
+            mcp_path.write_text(json.dumps(mcp_merged, ensure_ascii=False, indent=2) + "\n",
+                                "utf-8")
+    removed_skills = []
+    for name in _SKILL_NAMES:
+        d = kimi_home / "skills" / name
+        if d.is_dir():
+            removed_skills.append(name)
+            if not dry_run:
+                shutil.rmtree(d)
+    cfg_path = kimi_home / "config.toml"
+    cfg_changed = cfg_removed = False
+    if cfg_path.exists():
+        cfg_merged, cfg_changed = _unmerge_kimi_toml(cfg_path.read_text("utf-8"))
+        if cfg_changed:
+            cfg_removed = not cfg_merged.strip()
+            if not dry_run:
+                if cfg_removed:
+                    cfg_path.unlink()  # 摘空即删：文件本就是 install 新建的
+                else:
+                    cfg_path.write_text(cfg_merged, "utf-8")
+    script_path = kimi_home / "hooks" / "intent-gate-inject.py"
+    script_removed = script_path.exists()
+    if script_removed and not dry_run:
+        script_path.unlink()
+    hooks_dir = kimi_home / "hooks"
+    markers = (sorted(hooks_dir.glob(".ig-injected-*"))
+               if hooks_dir.is_dir() else [])
+    if not dry_run:
+        for m in markers:
+            m.unlink()
+    return {
+        "ok": True, "target": "kimi-code",
+        "mcp_json": str(mcp_path), "mcp_changed": mcp_changed,
+        "skills": removed_skills,
+        "config_toml": str(cfg_path), "hook_changed": cfg_changed,
+        "config_removed": cfg_removed,
+        "hook_script_removed": script_removed,
+        "session_markers_removed": [str(m) for m in markers],
+        "dry_run": dry_run,
+    }
+
+
 # ---------------------------------------------------------------- 公共入口
 def target_path(target: str, home: Path | None = None) -> Path:
     if target == "dsh":
         return _dsh_home(home)
+    if target == "kimi-code":
+        return _kimi_home(home)  # 多文件 target，返回根目录（同 dsh 惯例）
     home = home or Path.home()
     if target == "cursor":
         return home / ".cursor" / "hooks.json"
@@ -315,6 +546,8 @@ def target_path(target: str, home: Path | None = None) -> Path:
 def install(target: str, home: Path | None = None, dry_run: bool = False) -> dict:
     if target == "dsh":
         return _install_dsh(_dsh_home(home), dry_run)
+    if target == "kimi-code":
+        return _install_kimi_code(_kimi_home(home), dry_run)
     path = target_path(target, home)
     if target == "cursor":
         existing = json.loads(path.read_text("utf-8")) if path.exists() else {}
@@ -335,6 +568,8 @@ def install(target: str, home: Path | None = None, dry_run: bool = False) -> dic
 def uninstall(target: str, home: Path | None = None, dry_run: bool = False) -> dict:
     if target == "dsh":
         return _uninstall_dsh(_dsh_home(home), dry_run)
+    if target == "kimi-code":
+        return _uninstall_kimi_code(_kimi_home(home), dry_run)
     path = target_path(target, home)
     if not path.exists():
         return {"ok": True, "target": target, "path": str(path),

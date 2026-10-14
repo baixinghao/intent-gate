@@ -303,7 +303,7 @@ reference source.
 | Python | ≥ 3.11 | [python.org](https://www.python.org/downloads/); pipx/uv manage an isolated environment |
 | Package manager | `pipx` or `uv` | [Install pipx](https://pipx.pypa.io/stable/installation/) / [Install uv](https://docs.astral.sh/uv/getting-started/installation/) |
 | OS | Windows / macOS / Linux | On Windows, the plugin's SessionStart injection needs [Git Bash](https://gitforwindows.org/) (skipped silently when missing; everything else keeps working) |
-| MCP client | Any MCP-capable client | Claude Code / Cursor / VS Code / DeepSeek Harness etc.; full plugin support (skills/hooks) is Claude Code + DeepSeek Harness (`install --target dsh`) |
+| MCP client | Any MCP-capable client | Claude Code / Cursor / VS Code / DeepSeek Harness / Kimi Code etc.; full plugin support (skills/hooks) is Claude Code + DeepSeek Harness (`install --target dsh`) + Kimi Code (`install --target kimi-code`) |
 
 **Dependencies** (installed automatically — nothing manual):
 
@@ -356,13 +356,15 @@ Every variable has a default — **zero config to use**; copy `.env.example` to 
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
 | DeepSeek Harness（`install --target dsh`） | ✅ Verified——MCP tools via `dsh-mcp-client` (14 tools handshake-tested) + skills hot-loading into `$DSH_HOME/skills`; installer merge/idempotency unit-tested |
+| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json merge + skills + per-session injection hook; merge/idempotency unit-tested, hook contract per official docs |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
 The enforcement half — tools, question ledger, lint gates, and the
 `doc_analysis_playbook` prompt — is plain MCP and works in any client that
-supports MCP prompts. The skills/hooks half is Claude Code-specific; DSH gets
-the full surface (tools + skills) through `install --target dsh`.
+supports MCP prompts. The skills/hooks half is Claude Code-specific; DSH and
+Kimi Code get the full surface (tools + skills) through `install --target dsh`
+/ `--target kimi-code`.
 
 After step 1 (`pipx`/`uv tool install intent-gate-mcp`), register one way:
 
@@ -462,6 +464,25 @@ Three DSH-specific notes:
   `$DSH_HOME/profiles/*/cordis.patch.yml`. A patch template (comment + `[]`)
   is fully replaced, user patch entries are preserved.
 
+**Kimi Code:** three pieces, zero manual config — the installer merges the
+`intent-gate` server into `$KIMI_CODE_HOME/mcp.json` (merge-only, existing
+`mcpServers` entries untouched), copies the four skills into
+`$KIMI_CODE_HOME/skills/`, and appends a managed `[[hooks]]` block to
+`$KIMI_CODE_HOME/config.toml` that injects the entry discipline once per
+session on `UserPromptSubmit` (the hook script is fail-open — it can never
+block your session; `uninstall --target kimi-code` reverts exactly what
+install added):
+
+```bash
+pipx install intent-gate-mcp            # 1) install the server (or: uv tool install intent-gate-mcp)
+intent-gate install --target kimi-code  # 2) wire Kimi Code — mcp.json + skills + per-session injection hook
+# 3) restart the Kimi Code session: tools appear as mcp__intent-gate__<tool>,
+#    skills live in $KIMI_CODE_HOME/skills, entry discipline is injected on
+#    the first prompt of every session
+```
+
+`KIMI_CODE_HOME` is respected when set; it defaults to `~/.kimi-code`.
+
 Whatever the client, start by asking the agent to read the MCP prompt
 `doc_analysis_playbook` in full — it is the law, and it ships with the
 server, not with any plugin. (Clients without MCP-prompt support can point
@@ -476,7 +497,7 @@ chat dialog as fallback).
 ## Notes
 
 - **Document-parsing boundary**: .docx only; `.doc` legacy / `.pdf` / `.xlsx` and other binaries must be converted first (Word「Save As → .docx or Plain Text (.txt)」, PDF export/save-as text)
-- The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is Claude Code-specific; DeepSeek Harness gets the full surface via `install --target dsh`** — other clients get the server half only
+- The MCP server is generic (stdio/SSE, works with any MCP client); the **skills/hooks plugin form is Claude Code-specific; DeepSeek Harness and Kimi Code get the full surface via `install --target dsh` / `--target kimi-code`** — other clients get the server half only
 - The ledger lives under `{workspace_root}/.harness/requests/` and is tracked by git — add a `.gitignore` entry if you don't want it committed. Which root that is comes from `project_path` per call, falling back to the server's startup root (see the DSH workspace-resolution note above)
 
 ## Development (from a clone)
