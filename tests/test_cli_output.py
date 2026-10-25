@@ -2,9 +2,9 @@
 
 Bug: `intent-gate hook session-start` crashed with
     UnicodeEncodeError: 'gbk' codec can't encode character '\U0001f4cb'
-because the injected skill text contains emoji and print() encoded it with
-the ANSI code page. The fix forces UTF-8 on stdout/stderr in main() with a
-silent fallback; these tests pin that behaviour without touching MCP paths.
+because hook output contained emoji and print() encoded it with the ANSI code
+page. The fix forces UTF-8 on stdout/stderr in main() with a silent fallback;
+these tests pin that behaviour without touching MCP paths.
 
 Runs with stdlib only:  python -m unittest discover -s tests -v
 """
@@ -43,18 +43,18 @@ class HookOutputOnGbkStdoutTests(unittest.TestCase):
     def test_hook_session_start_survives_gbk_stdout(self):
         out = self._run_main_with_gbk_stdout(
             ["intent-gate", "hook", "session-start", "--format", "standard"])
-        # The injected skill text contains emoji (📋); must not raise, and the
-        # bytes must decode as UTF-8 (the fix reconfigures the stream).
         text = out.decode("utf-8")  # raises if not UTF-8
         self.assertIn("additionalContext", text)
         payload = json.loads(text)
         self.assertIn("additionalContext", payload)
 
     def test_hook_output_keeps_emoji_verbatim(self):
-        out = self._run_main_with_gbk_stdout(
-            ["intent-gate", "hook", "session-start", "--format", "standard"])
+        payload = '{"additionalContext": "📋"}'
+        with mock.patch("intent_gate.__main__.emit_session_start", return_value=payload):
+            out = self._run_main_with_gbk_stdout(
+                ["intent-gate", "hook", "session-start", "--format", "standard"])
         text = out.decode("utf-8")
-        # 📋 U+1F4CB must survive byte-exact, not get mangled into '?'
+        # A controlled payload keeps the encoding regression independent of router length.
         self.assertIn("\U0001f4cb", text)
 
     def test_install_dry_run_survives_gbk_stdout(self):

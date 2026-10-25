@@ -186,7 +186,7 @@ Once installed, you drive it with plain language. This table is the whole manual
 | 回答它的提问："1"，或 "4 余额不足一律拒绝" | the funnel | Answer logged verbatim → injected into the diagrams → settled with a precise landing point |
 | "红蓝对抗 / blue-team review" —— **另开新会话说** | 🔵 Blue team（`red-blue-review`） | Independent adversarial review of the delivered summary: R1–R9 checks → findings with verdict PASS / FAIL-可整改 / FAIL-重做 |
 | "按 findings 整改"（回到红军的会话里说） | 🔴 Red team revision discipline | Each finding settled into `revision-log.md` with a real landing point, lint re-runs to zero CRITICAL; anything conflicting with your earlier rulings comes back to you for a decision |
-| 什么都不说，直接让它写代码 | SessionStart hook | The agent reads the landed `summary.md` contract before coding; `blocked` or lint-CRITICAL contracts refuse to be coded against |
+| 什么都不说，直接让它写代码 | compact routing Hook + `contract-coding` | The agent reads the landed `summary.md` contract before coding; `blocked` or lint-CRITICAL contracts refuse to be coded against |
 
 Two rules worth remembering:
 
@@ -329,8 +329,8 @@ claude plugin marketplace add baixinghao/intent-gate
 claude plugin install intent-gate@baixinghao-plugins
 ```
 
-Restart your session. Done — entry discipline is auto-injected and the MCP tools
-are live.
+Restart your session. Done — the Hook injects only a compact router and the MCP
+tools are live; full Skills and the playbook load on demand.
 
 > ⚠️ **Step 1 is not optional.** The plugin's skills are discipline; the MCP server
 > is enforcement. A plugin-only install (no `intent-gate` command on PATH) leaves you
@@ -356,7 +356,7 @@ Every variable has a default — **zero config to use**; copy `.env.example` to 
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
 | DeepSeek Harness（`install --target dsh`） | ✅ Verified——MCP tools via `dsh-mcp-client` (14 tools handshake-tested) + skills hot-loading into `$DSH_HOME/skills`; installer merge/idempotency unit-tested |
-| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json merge + skills + per-session injection hook; merge/idempotency unit-tested, hook contract per official docs |
+| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json merge + skills + compact per-session routing hook; merge/idempotency unit-tested, hook contract per official docs |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
@@ -420,10 +420,10 @@ underscore (`mcp-servers` is silently ignored):
 command = "intent-gate"
 ```
 
-**Discipline injection beyond Claude Code:** the SessionStart hook (entry
-discipline auto-injected at every session start) is host-agnostic. After
-installing the server, wire it into your agent's hooks config with one
-command — merge-only, idempotent, and `uninstall --target` reverts it:
+**Compact routing beyond Claude Code:** the SessionStart hook injects only the
+shared compact router, never the full Skill or playbook. After installing the
+server, wire it into your agent's hooks config with one command — merge-only,
+idempotent, and `uninstall --target` reverts it:
 
 ```bash
 intent-gate install --target cursor   # writes ~/.cursor/hooks.json
@@ -468,17 +468,17 @@ Three DSH-specific notes:
 `intent-gate` server into `$KIMI_CODE_HOME/mcp.json` (merge-only, existing
 `mcpServers` entries untouched), copies the four skills into
 `$KIMI_CODE_HOME/skills/`, and appends a managed `[[hooks]]` block to
-`$KIMI_CODE_HOME/config.toml` that injects the entry discipline once per
-session on `UserPromptSubmit` (the hook script is fail-open — it can never
-block your session; `uninstall --target kimi-code` reverts exactly what
-install added):
+`$KIMI_CODE_HOME/config.toml` that injects only the compact router once per
+session on `UserPromptSubmit`; full Skills and the playbook still load for
+matching tasks (the hook script is fail-open — it can never block your session;
+`uninstall --target kimi-code` reverts exactly what install added):
 
 ```bash
 pipx install intent-gate-mcp            # 1) install the server (or: uv tool install intent-gate-mcp)
-intent-gate install --target kimi-code  # 2) wire Kimi Code — mcp.json + skills + per-session injection hook
+intent-gate install --target kimi-code  # 2) wire Kimi Code — mcp.json + skills + compact per-session routing hook
 # 3) restart the Kimi Code session: tools appear as mcp__intent-gate__<tool>,
-#    skills live in $KIMI_CODE_HOME/skills, entry discipline is injected on
-#    the first prompt of every session
+#    skills live in $KIMI_CODE_HOME/skills; only the compact router is injected
+#    on the first prompt of every session
 ```
 
 `KIMI_CODE_HOME` is respected when set; it defaults to `~/.kimi-code`.

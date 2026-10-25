@@ -1,7 +1,7 @@
 # Claude Code 插件形态
 
 本仓库同时是一个 Claude Code plugin：安装插件即自动获得 MCP server、
-SessionStart 纪律注入和三个 skill，agent 零配置接入。
+SessionStart 短路由提示和四个 skill，agent 零配置接入。
 
 ## 骨架
 
@@ -10,15 +10,17 @@ SessionStart 纪律注入和三个 skill，agent 零配置接入。
 .mcp.json                    # 插件级 MCP server 声明（装插件即注册 intent-gate）
 hooks/
 ├── hooks.json               # SessionStart（startup|clear|compact）挂载点
-├── session-start            # 注入 using-intent-gate 全文的脚本（三平台输出分支）
+├── session-context.md       # 共享短路由文本（Hook 唯一自动注入的内容）
+├── session-start            # 注入短路由的脚本（三平台输出分支）
 └── run-hook.cmd             # Windows/Unix 多语言引导包装器
 skills/
-├── using-intent-gate/        # 每会话开局自动注入：升级纪律 + 两个可选能力位置
+├── using-intent-gate/        # 需求歧义/关键决策/契约编码时按需加载完整纪律
 ├── requirement-alignment/   # 分析需求/画图/DDL/续跑时触发：意图对齐工作流纲要
+├── contract-coding/         # 有契约的编码任务：检查状态/lint，按图施工
 └── red-blue-review/         # 可选：点名"红蓝对抗/蓝军评审"时触发（不进 MCP 工具面）
 ```
 
-> 三个 skill 的触发场景与操作面详见
+> 四个 skill 的触发场景与操作面详见
 > [../README.md](../README.md)「Skill 触发地图」一节。
 
 > 钉钉交互（群通道 + 阻塞式决策闸门 + dingtalk-escalation skill）已剥离为
@@ -27,11 +29,12 @@ skills/
 
 ## 设计要点
 
-- **SessionStart hook 解决纪律到达率**：MCP prompt `doc_analysis_playbook`
-  是被动的——agent 不来取，纪律就是空转。hook 在每个会话开局把
-  `using-intent-gate` 注入上下文，声明「何时必须走闸门、分析前必须先读
-  playbook」。脚本按平台输出三种 JSON（Claude Code 嵌套式 / Cursor
-  snake_case / Copilot 顶层），Windows 由 `run-hook.cmd` 引导 Git Bash。
+- **SessionStart hook 只负责短路由**：MCP prompt `doc_analysis_playbook`
+  和完整 Skill 都是被动的——agent 不来取，纪律就是空转。hook 注入共享的
+  `session-context.md`，声明「哪些任务加载哪个 Skill、分析前必须先读
+  playbook」，不再把 `using-intent-gate` 全文塞进每个会话。脚本按平台输出
+  三种 JSON（Claude Code 嵌套式 / Cursor snake_case / Copilot 顶层），
+  Windows 由 `run-hook.cmd` 引导 Git Bash。
 - **SKILL.md 只放触发条件与纲要**：细节单一来源在
   `src/intent_gate/analysis/playbook.md`（经 MCP prompt 全文分发）。
   两边不同步是失真事故的头号来源，skill 里不许复制 playbook 正文。
@@ -50,7 +53,7 @@ pip install -e .            # 注册 intent-gate 命令（零凭据，无需 .en
 ```
 
 然后在 Claude Code 中把本仓库目录作为插件目录加载（或复制/软链到插件
-市场目录），重启会话即生效：SessionStart 注入纪律，MCP 工具面可用。
+市场目录），重启会话即生效：SessionStart 注入短路由提示，MCP 工具面可用。
 
 钉钉群通道另装姊妹篇：在姊妹仓 intent-gate-service/ 目录下
 `pip install -e ../intent-gate-service -e .`，`.mcp.json` 同时挂 `intent-gate` 与 `intent-gate-service` 两个服务。

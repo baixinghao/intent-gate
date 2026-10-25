@@ -17,11 +17,26 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from intent_gate.hook import emit_session_start  # noqa: E402
+from intent_gate.hook import emit_session_start, get_session_context  # noqa: E402
 from intent_gate.installer import (  # noqa: E402
-    _DSH_MARK, _KIMI_MARK_BEGIN, _PLAYBOOK_SKILL_NAME, _SKILL_NAMES,
-    install, target_path, uninstall,
+    _DSH_MARK,
+    _KIMI_MARK_BEGIN,
+    _LEGACY_USING_DESCRIPTION,
+    _PLAYBOOK_SKILL_NAME,
+    _SKILL_NAMES,
+    install,
+    target_path,
+    uninstall,
 )
+
+
+def _assert_compact_router(case: unittest.TestCase, text: str) -> None:
+    case.assertIn("Intent-gate routing", text)
+    case.assertIn("doc_analysis_playbook", text)
+    case.assertNotIn("name: using-intent-gate", text)
+    case.assertNotIn("## Red Flags", text)
+    case.assertNotIn("# 需求分析 playbook", text)
+    case.assertLessEqual(len(get_session_context().encode("utf-8")), 1024)
 
 
 class Base(unittest.TestCase):
@@ -155,6 +170,20 @@ class DshInstallTests(unittest.TestCase):
         self.assertEqual(r["skills"]["installed"], [])
         text = self.web_patch.read_text("utf-8")
         self.assertEqual(text.count("serverName: intent-gate"), 1)
+
+    def test_legacy_using_description_is_migrated_without_overwrite(self):
+        skill = self.dsh_home / "skills" / "using-intent-gate" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(
+            "---\nname: using-intent-gate\n" + _LEGACY_USING_DESCRIPTION
+            + "\n---\n\ncustom body\n", "utf-8"
+        )
+        r = install("dsh")
+        self.assertEqual(r["skills"]["updated"], ["using-intent-gate"])
+        text = skill.read_text("utf-8")
+        self.assertIn("analyzing requirements/PRDs", text)
+        self.assertNotIn(_LEGACY_USING_DESCRIPTION, text)
+        self.assertIn("custom body", text)
 
     def test_preserves_user_patch_entries(self):
         self.web_patch.write_text(
@@ -295,6 +324,8 @@ class KimiCodeInstallTests(unittest.TestCase):
         for name in _SKILL_NAMES:
             self.assertTrue((self.kimi_home / "skills" / name / "SKILL.md").exists(),
                             f"missing skill {name}")
+        context = self.kimi_home / "skills" / "using-intent-gate" / "session-context.md"
+        self.assertEqual(context.read_text("utf-8"), get_session_context())
         toml = (self.kimi_home / "config.toml").read_text("utf-8")
         self.assertIn(_KIMI_MARK_BEGIN, toml)
         self.assertIn('event = "UserPromptSubmit"', toml)
@@ -310,10 +341,34 @@ class KimiCodeInstallTests(unittest.TestCase):
         self.assertFalse(r["mcp_changed"])
         self.assertFalse(r["hook_changed"])
         self.assertFalse(r["hook_script_changed"])
+        self.assertFalse(r["skills"]["context_changed"])
         self.assertEqual(r["skills"]["installed"], [])
         toml = (self.kimi_home / "config.toml").read_text("utf-8")
         self.assertEqual(toml.count(_KIMI_MARK_BEGIN), 1)
         self.assertEqual(toml.count("[[hooks]]"), 1)
+
+    def test_context_is_refreshed_without_overwriting_skills(self):
+        install("kimi-code")
+        context = self.kimi_home / "skills" / "using-intent-gate" / "session-context.md"
+        context.write_text("stale\n", "utf-8")
+        r = install("kimi-code")
+        self.assertTrue(r["skills"]["context_changed"])
+        self.assertEqual(context.read_text("utf-8"), get_session_context())
+        self.assertEqual(r["skills"]["installed"], [])
+
+    def test_legacy_using_description_is_migrated_without_overwrite(self):
+        skill = self.kimi_home / "skills" / "using-intent-gate" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(
+            "---\nname: using-intent-gate\n" + _LEGACY_USING_DESCRIPTION
+            + "\n---\n\ncustom body\n", "utf-8"
+        )
+        r = install("kimi-code")
+        self.assertEqual(r["skills"]["updated"], ["using-intent-gate"])
+        text = skill.read_text("utf-8")
+        self.assertIn("analyzing requirements/PRDs", text)
+        self.assertNotIn(_LEGACY_USING_DESCRIPTION, text)
+        self.assertIn("custom body", text)
 
     def test_preserves_existing_config_and_mcp_entries(self):
         self.kimi_home.mkdir(parents=True)
@@ -384,18 +439,19 @@ class KimiCodeInstallTests(unittest.TestCase):
         install("kimi-code")
         first = self._run_hook('{"session_id": "s1"}')
         self.assertEqual(first.returncode, 0)
-        self.assertIn("name: using-intent-gate", first.stdout)
+        self.assertEqual(first.stdout, get_session_context())
+        _assert_compact_router(self, first.stdout)
         second = self._run_hook('{"session_id": "s1"}')
         self.assertEqual(second.returncode, 0)
         self.assertEqual(second.stdout, "")
         third = self._run_hook('{"session_id": "s2"}')  # 新会话重新注入
-        self.assertIn("name: using-intent-gate", third.stdout)
+        self.assertEqual(third.stdout, get_session_context())
 
     def test_hook_script_fail_open_on_garbage_stdin(self):
         install("kimi-code")
         r = self._run_hook("not json at all")
         self.assertEqual(r.returncode, 0)  # 取不到 session_id 也照常注入（unknown 去重）
-        self.assertIn("name: using-intent-gate", r.stdout)
+        self.assertEqual(r.stdout, get_session_context())
 
     def test_home_param_used_when_env_missing(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -411,18 +467,29 @@ class HookEmitTests(Base):
     def test_cursor_contract_snake_case(self):
         payload = json.loads(emit_session_start("cursor"))
         self.assertIn("additional_context", payload)
-        self.assertIn("EXTREMELY_IMPORTANT", payload["additional_context"])
-        self.assertIn("doc_analysis_playbook", payload["additional_context"])
+        self.assertIn("INTENT_GATE_ROUTING", payload["additional_context"])
+        _assert_compact_router(self, payload["additional_context"])
 
     def test_claude_contract_nested(self):
         payload = json.loads(emit_session_start("claude"))
         out = payload["hookSpecificOutput"]
         self.assertEqual(out["hookEventName"], "SessionStart")
-        self.assertIn("doc_analysis_playbook", out["additionalContext"])
+        _assert_compact_router(self, out["additionalContext"])
 
     def test_standard_contract_top_level(self):
         payload = json.loads(emit_session_start("standard"))
         self.assertIn("additionalContext", payload)
+        _assert_compact_router(self, payload["additionalContext"])
+
+    def test_using_skill_has_task_scoped_description(self):
+        skill = (Path(__file__).resolve().parent.parent
+                 / "skills" / "using-intent-gate" / "SKILL.md")
+        description = next(
+            line for line in skill.read_text("utf-8").splitlines()
+            if line.startswith("description: ")
+        )
+        self.assertIn("analyzing requirements/PRDs", description)
+        self.assertNotIn("starting any conversation", description)
 
     def test_unknown_format_rejected(self):
         with self.assertRaises(ValueError):

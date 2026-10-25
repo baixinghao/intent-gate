@@ -28,6 +28,8 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
+from .hook import get_session_context
+
 SUPPORTED_TARGETS = ("cursor", "codex", "dsh", "kimi-code")
 
 _HOOK_CMD = {
@@ -44,6 +46,13 @@ _DSH_MARK = "# intent-gate: dsh integration (managed by 'intent-gate install --t
 _SKILL_NAMES = ("using-intent-gate", "requirement-alignment",
                 "red-blue-review", "contract-coding")
 _PLAYBOOK_SKILL_NAME = "doc-analysis-playbook"
+_LEGACY_USING_DESCRIPTION = (
+    "description: Use when starting any conversation in a project that has the "
+    "intent-gate MCP - establishes requirement intent-alignment discipline (never guess "
+    "on ambiguity), where the analysis playbook lives, and the two optional add-ons "
+    "(red-blue adversarial review skill, intent-gate-service sister service for DingTalk "
+    "group consensus)"
+)
 
 
 def _dsh_home(home: Path | None) -> Path:
@@ -62,6 +71,21 @@ def _skill_source_text(name: str) -> str:
         repo = (Path(__file__).resolve().parent.parent.parent
                 / "skills" / name / "SKILL.md")
         return repo.read_text(encoding="utf-8")
+
+
+def _migrate_using_description(path: Path, source: str, dry_run: bool) -> bool:
+    """只迁移已知的旧触发描述，保留用户对其余 Skill 内容的修改。"""
+    current = path.read_text(encoding="utf-8")
+    if _LEGACY_USING_DESCRIPTION not in current:
+        return False
+    description = next(
+        line for line in source.splitlines() if line.startswith("description: ")
+    )
+    if not dry_run:
+        path.write_text(
+            current.replace(_LEGACY_USING_DESCRIPTION, description, 1), encoding="utf-8"
+        )
+    return True
 
 
 def _playbook_skill_text() -> str:
@@ -175,11 +199,16 @@ def _unmerge_dsh_patch(existing: str, block: str) -> tuple[str, bool]:
 
 def _install_dsh_skills(dsh_home: Path, dry_run: bool) -> dict:
     skills_dir = dsh_home / "skills"
-    installed, skipped = [], []
+    installed, skipped, updated = [], [], []
     for name in (*_SKILL_NAMES, _PLAYBOOK_SKILL_NAME):
         dst = skills_dir / name / "SKILL.md"
         if dst.exists():
-            skipped.append(name)
+            if name == "using-intent-gate" and _migrate_using_description(
+                dst, _skill_source_text(name), dry_run
+            ):
+                updated.append(name)
+            else:
+                skipped.append(name)
             continue
         if dry_run:
             installed.append(name)
@@ -189,7 +218,7 @@ def _install_dsh_skills(dsh_home: Path, dry_run: bool) -> dict:
                 else _playbook_skill_text())
         dst.write_text(text, encoding="utf-8")
         installed.append(name)
-    return {"installed": installed, "skipped": skipped}
+    return {"installed": installed, "skipped": skipped, "updated": updated}
 
 
 def _install_dsh(dsh_home: Path, dry_run: bool) -> dict:
@@ -348,8 +377,8 @@ def main():
         marker = home / "hooks" / (".ig-injected-" + session_id)
         if marker.exists():
             return  # 本会话已注入过，静默放行
-        skill = home / "skills" / "using-intent-gate" / "SKILL.md"
-        sys.stdout.write(skill.read_text(encoding="utf-8"))
+        context = home / "skills" / "using-intent-gate" / "session-context.md"
+        sys.stdout.write(context.read_text(encoding="utf-8"))
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("injected\n", encoding="utf-8")
     except Exception:
@@ -430,11 +459,16 @@ def _unmerge_kimi_toml(existing: str) -> tuple[str, bool]:
 
 def _install_kimi_skills(kimi_home: Path, dry_run: bool) -> dict:
     skills_dir = kimi_home / "skills"
-    installed, skipped = [], []
+    installed, skipped, updated = [], [], []
     for name in _SKILL_NAMES:
         dst = skills_dir / name / "SKILL.md"
         if dst.exists():
-            skipped.append(name)
+            if name == "using-intent-gate" and _migrate_using_description(
+                dst, _skill_source_text(name), dry_run
+            ):
+                updated.append(name)
+            else:
+                skipped.append(name)
             continue
         if dry_run:
             installed.append(name)
@@ -442,7 +476,21 @@ def _install_kimi_skills(kimi_home: Path, dry_run: bool) -> dict:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(_skill_source_text(name), encoding="utf-8")
         installed.append(name)
-    return {"installed": installed, "skipped": skipped}
+
+    context_path = skills_dir / "using-intent-gate" / "session-context.md"
+    context_text = get_session_context()
+    context_changed = (
+        not context_path.exists() or context_path.read_text("utf-8") != context_text
+    )
+    if context_changed and not dry_run:
+        context_path.parent.mkdir(parents=True, exist_ok=True)
+        context_path.write_text(context_text, encoding="utf-8")
+    return {
+        "installed": installed,
+        "skipped": skipped,
+        "updated": updated,
+        "context_changed": context_changed,
+    }
 
 
 def _install_kimi_code(kimi_home: Path, dry_run: bool) -> dict:

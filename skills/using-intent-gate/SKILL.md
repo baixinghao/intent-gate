@@ -1,6 +1,6 @@
 ---
 name: using-intent-gate
-description: Use when starting any conversation in a project that has the intent-gate MCP - establishes requirement intent-alignment discipline (never guess on ambiguity), where the analysis playbook lives, and the two optional add-ons (red-blue adversarial review skill, intent-gate-service sister service for DingTalk group consensus)
+description: Use when analyzing requirements/PRDs, resolving business-rule ambiguity or conflicting requirements, making irreversible or business-critical decisions, or implementing code against an intent-gate contract - establishes intent-alignment discipline, locates the analysis playbook, and the optional red-blue review and DingTalk group consensus capabilities
 ---
 
 <SUBAGENT-STOP>

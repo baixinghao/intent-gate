@@ -19,38 +19,38 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
-# 单一事实源：skills/using-intent-gate/SKILL.md，经 hatch force-include
-# 打进 wheel（intent_gate/_assets/）。禁止在 Python 里手抄第二份。
-_SKILL_RESOURCE = "using-intent-gate.SKILL.md"
+# 短路由文本的单一事实源在 hooks/，经 hatch force-include 打进 wheel。
+_CONTEXT_RESOURCE = "session-context.md"
 
 
-def _skill_text() -> str:
-    """wheel 内读 _assets（force-include 产物）；源码树（测试/dev）回退读仓库真身。"""
+def get_session_context() -> str:
+    """wheel 内读 _assets；源码树（测试/dev）回退读仓库真身。"""
     try:
-        return (resources.files("intent_gate._assets") / _SKILL_RESOURCE).read_text(encoding="utf-8")
+        return (resources.files("intent_gate._assets") / _CONTEXT_RESOURCE).read_text(
+            encoding="utf-8"
+        )
     except (FileNotFoundError, ModuleNotFoundError):
         repo_copy = (Path(__file__).resolve().parent.parent.parent
-                     / "skills" / "using-intent-gate" / "SKILL.md")
+                     / "hooks" / "session-context.md")
         return repo_copy.read_text(encoding="utf-8")
 
 
 def build_session_context() -> str:
-    """与 bash 版 session-start 完全同构的注入文本。"""
+    """与 bash 版 session-start 完全同构的短路由文本。"""
     mcp_warning = ""
     if shutil.which("intent-gate") is None:
         mcp_warning = (
             "⚠️ INTENT-GATE MCP SERVER NOT RUNNING: command 'intent-gate' not found on PATH. "
-            "Discipline skills are injected, but ALL mechanical gates are unavailable "
+            "The compact router is available, but ALL mechanical gates are unavailable "
             "(no question persistence, no lint enforcement). Tell the human to run: "
             "pipx install intent-gate-mcp — then restart the session.\n\n"
         )
     return (
-        "<EXTREMELY_IMPORTANT>\nYou have a human escalation gate (intent-gate MCP).\n\n"
+        "<INTENT_GATE_ROUTING>\nYou have a human escalation gate (intent-gate MCP).\n\n"
         f"{mcp_warning}"
-        "**Below is the full content of your 'intent-gate:using-intent-gate' skill - "
-        "your introduction to when and how to escalate decisions to humans. "
-        "Read it before acting on anything it covers:**\n\n"
-        f"{_skill_text()}\n</EXTREMELY_IMPORTANT>"
+        "**Select Skills only for matching tasks; full Skill and playbook text stays "
+        "on demand:**\n\n"
+        f"{get_session_context()}\n</INTENT_GATE_ROUTING>"
     )
 
 

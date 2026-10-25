@@ -169,7 +169,7 @@ intent-gate 的输入是 **UTF-8 文本文件** 或 **.docx**（Word 需求文�
 | 回答它的提问："1"，或 "4 余额不足一律拒绝" | 对齐漏斗 | 原话逐字落账 → 注入图/规则 → 带精确落点核销 |
 | "红蓝对抗 / 蓝军评审"——**另开新会话说** | 🔵 蓝军（`red-blue-review`） | 对已交付的 summary 做独立对抗评审：R1-R9 九项检查 → findings，结论 PASS / FAIL-可整改 / FAIL-重做 |
 | "按 findings 整改"（回到红军的会话里说） | 🔴 红军整改纪律 | 每条 finding 落进 `revision-log.md`（整改动作 + 真实落点），lint 重跑 CRITICAL 归零；与你之前拍板冲突的，端回来请你裁决 |
-| 什么都不说，直接让它写代码 | SessionStart hook | 编码前 agent 自动读已落地的 `summary.md` 契约；`blocked` 或 lint 带 CRITICAL 的契约拒绝被编码 |
+| 什么都不说，直接让它写代码 | 短路由 Hook + `contract-coding` | 编码前 agent 自动读已落地的 `summary.md` 契约；`blocked` 或 lint 带 CRITICAL 的契约拒绝被编码 |
 
 两条值得记住的规矩：
 
@@ -280,7 +280,7 @@ claude plugin marketplace add baixinghao/intent-gate
 claude plugin install intent-gate@baixinghao-plugins
 ```
 
-重启会话，完事——入口纪律自动注入，MCP 工具面在线。
+重启会话，完事——Hook 只注入短路由提示，MCP 工具面在线；完整 Skill 和 Playbook 按需加载。
 
 > ⚠️ **第 1 步不可省。** 插件的 skill 是纪律，MCP server 才是执法。只装插件
 > （PATH 里没有 `intent-gate` 命令）= 只剩嘴上劝告，机械门禁全部阵亡——
@@ -305,7 +305,7 @@ claude plugin install intent-gate@baixinghao-plugins
 |---|---|
 | Claude Code（plugin 全量：skills + hooks + MCP） | ✅ Stable——主战场，全量测试覆盖 |
 | DeepSeek Harness（`install --target dsh`） | ✅ 已验证——MCP 工具经 `dsh-mcp-client` 桥接（14 个工具握手实测）+ skills 热加载进 `$DSH_HOME/skills`；安装器合并/幂等逻辑有单元测试 |
-| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json 合并 + skills + 每会话纪律注入 hook；合并/幂等逻辑有单元测试，hook 契约依据官方文档 |
+| Kimi Code（`install --target kimi-code`） | 🧪 Beta——mcp.json 合并 + skills + 每会话短路由 hook；合并/幂等逻辑有单元测试，hook 契约依据官方文档 |
 | Cursor / Codex（`install --target` 纪律注入） | 🧪 Beta——合并/幂等逻辑有单元测试与构建验证，hook 契约依据官方文档；尚未经长会话实战，[欢迎反馈](https://github.com/baixinghao/intent-gate/issues) |
 | 其他 MCP 客户端（mcpServers 配置） | 🤝 社区验证——协议标准，配置形状已核实 |
 
@@ -367,9 +367,9 @@ Codex CLI 用 TOML，表名必须是下划线的 `mcp_servers`（写成 `mcp-ser
 command = "intent-gate"
 ```
 
-**Claude Code 之外的纪律注入**：SessionStart hook（每局开场自动注入入口纪律）
-本身与宿主无关。装好 server 后，一条命令接进你的 agent 的 hooks 配置——
-只合并不覆盖、幂等，`uninstall --target` 可拆线：
+**Claude Code 之外的短路由注入**：SessionStart hook 每局开场只注入共享短路由，
+不注入完整 Skill 或 Playbook。装好 server 后，一条命令接进你的 agent 的 hooks
+配置——只合并不覆盖、幂等，`uninstall --target` 可拆线：
 
 ```bash
 intent-gate install --target cursor   # 写入 ~/.cursor/hooks.json
@@ -407,14 +407,15 @@ intent-gate install --target dsh       # 2) 接线 harness——patch 合并 + s
 `$KIMI_CODE_HOME/mcp.json`（只合并不覆盖，已有 `mcpServers` 条目原样保留）、
 把 4 个 skills 复制到 `$KIMI_CODE_HOME/skills/`、并向
 `$KIMI_CODE_HOME/config.toml` 追加标记块包裹的 `[[hooks]]` 条目，
-在 `UserPromptSubmit` 事件按会话注入入口纪律（hook 脚本 fail-open，
-绝不阻塞会话；`uninstall --target kimi-code` 只拆自己接的线）：
+在 `UserPromptSubmit` 事件按会话只注入短路由提示；完整 Skill 和 Playbook
+仍在任务匹配时加载（hook 脚本 fail-open，绝不阻塞会话；
+`uninstall --target kimi-code` 只拆自己接的线）：
 
 ```bash
 pipx install intent-gate-mcp            # 1) 装 server（或 uv tool install intent-gate-mcp）
-intent-gate install --target kimi-code  # 2) 接线 Kimi Code——mcp.json + skills + 每会话纪律注入 hook
+intent-gate install --target kimi-code  # 2) 接线 Kimi Code——mcp.json + skills + 每会话短路由 hook
 # 3) 重启 Kimi Code 会话：工具以 mcp__intent-gate__<tool> 出现，
-#    skills 在 $KIMI_CODE_HOME/skills，每会话首个 prompt 自动注入入口纪律
+#    skills 在 $KIMI_CODE_HOME/skills，每会话首个 prompt 只注入短路由提示
 ```
 
 尊重 `KIMI_CODE_HOME` 环境变量，默认 `~/.kimi-code`。

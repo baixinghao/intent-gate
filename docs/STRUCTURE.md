@@ -33,12 +33,12 @@ intent-gate/
 │   └── STRUCTURE.md             # 本文档
 ├── hooks/
 │   ├── hooks.json               # SessionStart（startup|clear|compact）挂载点声明
-│   ├── session-start            # 注入脚本：把 using-intent-gate 全文塞进每个会话开局
-│   │                            #   （按 Claude/Cursor/Copilot 三平台输出三种 JSON）
+│   ├── session-context.md       # 共享短路由文本（约 1 KB 内，Hook 唯一自动注入内容）
+│   ├── session-start            # 注入短路由（按 Claude/Cursor/Copilot 输出三种 JSON）
 │   └── run-hook.cmd             # Windows/Unix 引导包装器（Windows 下引导 Git Bash 执行）
 ├── skills/
-│   ├── using-intent-gate/SKILL.md       # 【每会话自动注入】入口纪律：何时升级人工、
-│   │                                    #   两个可选能力位置、编码前必须读 summary 契约
+│   ├── using-intent-gate/SKILL.md       # 【需求歧义/关键决策/契约编码时按需加载】
+│   │                                    #   完整升级纪律、可选能力位置、契约检查规则
 │   ├── requirement-alignment/SKILL.md   # 【分析需求/画图/DDL/说"继续"时触发】
 │   │                                    #   三级对齐漏斗纲要 → 指向 MCP prompt playbook
 │   ├── contract-coding/SKILL.md         # 【实现有契约的需求时触发】编码期附加层：
@@ -85,10 +85,10 @@ intent-gate/
 │       │                        #   （终态/死状态/多出边/锚点错位/BR 引用/表读写）
 │       ├── mapper.py            # 【逻辑冻结】draft_mapping：意图注入映射表的
 │       │                        #   章节号/规则号/步骤号锚点真实定位（禁止手写）
-│       └── tools.py             # MCP 工具注册：4 工具 + 1 prompt（analyze_requirement /
+│       └── tools.py             # MCP 工具注册：5 工具 + 1 prompt（analyze_requirement /
 │                                #   record_judgment / lint_summary / draft_mapping /
-│                                #   doc_analysis_playbook）
-└── tests/                       # 69 条测试（纯文件驱动，无需任何凭据）
+│                                #   describe_workspace / doc_analysis_playbook）
+└── tests/                       # 测试套件（纯文件驱动，无需任何凭据）
     ├── test_core.py             #   纯核心：parse_reply / SenderPolicy / RateLimiter
     ├── test_alignment.py        #   意图对齐全链路：先落盘/收集去重/核销契约/推断闭环
     ├── test_analysis.py         #   解析引擎：红灯门禁/型态阈值/续跑只读文件现场
@@ -104,11 +104,11 @@ intent-gate/
 cd intent-gate
 python -m venv .venv && .venv\Scripts\activate    # Unix: source .venv/bin/activate
 pip install -e .                                  # 注册 intent-gate 命令
-python -m unittest discover -s tests -v           # 69 条测试，零凭据可跑
+python -m unittest discover -s tests -v           # 全量测试，零凭据可跑
 ```
 
 Claude Code 插件形态：把本目录作为插件目录加载（或软链到插件市场目录），
-重启会话即生效——SessionStart 自动注入入口纪律，MCP 工具面可用。
+重启会话即生效——SessionStart 注入短路由提示，MCP 工具面可用。
 手工挂 MCP（其他客户端）：`.mcp.json` 加 `"intent-gate": { "command": "intent-gate" }`。
 
 **什么场景用什么**

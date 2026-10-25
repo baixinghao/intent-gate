@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # SessionStart hook for the intent-gate plugin.
-# Injects the using-intent-gate discipline into every session so the agent
-# knows WHEN to escalate to humans and WHERE the alignment playbook lives.
+# Injects a compact router; full Skills and the playbook load only on demand.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-using_intent_gate_content=$(cat "${PLUGIN_ROOT}/skills/using-intent-gate/SKILL.md" 2>&1 || echo "Error reading using-intent-gate skill")
+router_content=$(cat "${PLUGIN_ROOT}/hooks/session-context.md" 2>&1 || echo "Error reading intent-gate session context")
 
 # Escape string for JSON embedding using bash parameter substitution.
 escape_for_json() {
@@ -21,7 +20,7 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
-using_intent_gate_escaped=$(escape_for_json "$using_intent_gate_content")
+router_escaped=$(escape_for_json "$router_content")
 
 # Preflight: the MCP server is the enforcement half of this plugin. If the
 # `intent-gate` command is not on PATH, skills still load but every mechanical
@@ -29,10 +28,10 @@ using_intent_gate_escaped=$(escape_for_json "$using_intent_gate_content")
 # say so loudly in the injected context and tell the human how to fix it.
 mcp_warning=""
 if ! command -v intent-gate >/dev/null 2>&1; then
-  mcp_warning="⚠️ INTENT-GATE MCP SERVER NOT RUNNING: command 'intent-gate' not found on PATH. Discipline skills are injected, but ALL mechanical gates are unavailable (no question persistence, no lint enforcement). Tell the human to run: pipx install intent-gate-mcp — then restart the session.\\n\\n"
+  mcp_warning="⚠️ INTENT-GATE MCP SERVER NOT RUNNING: command 'intent-gate' not found on PATH. The compact router is available, but ALL mechanical gates are unavailable (no question persistence, no lint enforcement). Tell the human to run: pipx install intent-gate-mcp — then restart the session.\\n\\n"
 fi
 
-session_context="<EXTREMELY_IMPORTANT>\nYou have a human escalation gate (intent-gate MCP).\n\n${mcp_warning}**Below is the full content of your 'intent-gate:using-intent-gate' skill - your introduction to when and how to escalate decisions to humans. Read it before acting on anything it covers:**\n\n${using_intent_gate_escaped}\n</EXTREMELY_IMPORTANT>"
+session_context="<INTENT_GATE_ROUTING>\nYou have a human escalation gate (intent-gate MCP).\n\n${mcp_warning}**Select Skills only for matching tasks; full Skill and playbook text stays on demand:**\n\n${router_escaped}\n</INTENT_GATE_ROUTING>"
 
 # Output context injection as JSON.
 # Cursor hooks expect additional_context (snake_case).
